@@ -1,10 +1,10 @@
-from mcp.server.transport_security import TransportSecuritySettings
+from mcp.server import transport_security
 from tradingview_mcp.server import mcp
+
+# Patch the validation function directly
+transport_security.TransportSecuritySettings.is_host_allowed = lambda self, host: True
 
 mcp.settings.host = "0.0.0.0"
 mcp.settings.port = 8000
-mcp._transport_security = TransportSecuritySettings(
-    enable_dns_rebinding_protection=False
-)
 
 mcp.run(transport="streamable-http")
