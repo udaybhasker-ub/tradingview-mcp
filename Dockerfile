@@ -39,4 +39,4 @@ HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
 
 # Run the MCP server over streamable-http (ideal for Docker/remote deployments)
 ENTRYPOINT ["tradingview-mcp"]
-CMD ["streamable-http", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["streamable-http", "--host", "0.0.0.0", "--port", "8000", "--allowed-hosts", "*"]
