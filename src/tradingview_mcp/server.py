@@ -14,7 +14,11 @@ import argparse
 import os
 from typing import Optional
 
+from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions
 from mcp.server.fastmcp import FastMCP
+from pydantic import AnyHttpUrl
+
+from tradingview_mcp.core.auth import SharedSecretOAuthProvider
 
 # ── Service imports ────────────────────────────────────────────────────────────
 from tradingview_mcp.core.services.coinlist import load_symbols
@@ -80,6 +84,40 @@ except ImportError:
 
 # ── MCP server instance ────────────────────────────────────────────────────────
 
+def _build_auth() -> tuple[SharedSecretOAuthProvider | None, AuthSettings | None]:
+    """Configure OAuth from env vars, if MCP_AUTH_TOKEN is set.
+
+    Claude.ai's remote connector flow requires an OAuth handshake even for
+    single-user / shared-secret setups. When MCP_AUTH_TOKEN is unset, the
+    server runs unauthenticated (e.g. local development).
+    """
+    token = os.environ.get("MCP_AUTH_TOKEN")
+    if not token:
+        return None, None
+
+    public_url = os.environ.get("MCP_PUBLIC_URL")
+    if not public_url:
+        raise RuntimeError(
+            "MCP_AUTH_TOKEN is set but MCP_PUBLIC_URL is not. "
+            "MCP_PUBLIC_URL must be the public https URL of this deployment "
+            "(e.g. https://your-app.up.railway.app)."
+        )
+
+    provider = SharedSecretOAuthProvider(token)
+    settings = AuthSettings(
+        issuer_url=AnyHttpUrl(public_url),
+        resource_server_url=AnyHttpUrl(f"{public_url.rstrip('/')}/mcp"),
+        client_registration_options=ClientRegistrationOptions(
+            enabled=True,
+            valid_scopes=["*"],
+            default_scopes=["*"],
+        ),
+    )
+    return provider, settings
+
+
+_auth_provider, _auth_settings = _build_auth()
+
 mcp = FastMCP(
     name="TradingView Multi-Market Screener",
     instructions=(
@@ -89,7 +127,15 @@ mcp = FastMCP(
         "Tools: top_gainers, top_losers, bollinger_scan, coin_analysis, multi_agent_analysis, "
         "volume_breakout_scanner, egx_market_overview, egx_sector_scan, and more."
     ),
+    auth_server_provider=_auth_provider,
+    auth=_auth_settings,
 )
+
+
+@mcp.custom_route("/health", methods=["GET"])
+async def health_check(request):
+    from starlette.responses import PlainTextResponse
+    return PlainTextResponse("OK")
 
 
 # ── Screener tools ─────────────────────────────────────────────────────────────
