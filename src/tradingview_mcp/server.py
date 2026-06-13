@@ -102,6 +102,8 @@ def _build_auth() -> tuple[SharedSecretOAuthProvider | None, AuthSettings | None
             "MCP_PUBLIC_URL must be the public https URL of this deployment "
             "(e.g. https://your-app.up.railway.app)."
         )
+    if "://" not in public_url:
+        public_url = f"https://{public_url}"
 
     provider = SharedSecretOAuthProvider(token)
     settings = AuthSettings(
