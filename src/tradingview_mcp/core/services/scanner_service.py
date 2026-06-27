@@ -22,7 +22,7 @@ from tradingview_mcp.core.services.screener_service import (
     _batch_budget_s,
     _batch_max_consecutive_fails,
 )
-from tradingview_mcp.core.utils.validators import EXCHANGE_SCREENER, is_stock_exchange
+from tradingview_mcp.core.utils.validators import get_market_type, is_stock_exchange
 
 try:
     # Patched: route through resilience layer (retry + 60s TTL cache).
@@ -45,7 +45,7 @@ def volume_breakout_scan(
     limit: int = 25,
 ) -> List[dict]:
     """
-    Detect coins with simultaneous volume and price breakouts.
+    Detect assets with simultaneous volume and price breakouts.
 
     Args:
         exchange:          Exchange identifier.
@@ -61,7 +61,7 @@ def volume_breakout_scan(
     if not symbols:
         return []
 
-    screener = EXCHANGE_SCREENER.get(exchange, "crypto")
+    screener = get_market_type(exchange)
     volume_breakouts: List[dict] = []
     batch_size = 100
 
@@ -217,7 +217,7 @@ def volume_confirmation_analyze(
     else:
         full_symbol = symbol
 
-    screener = EXCHANGE_SCREENER.get(exchange, "crypto")
+    screener = get_market_type(exchange)
 
     try:
         analysis = get_multiple_analysis(screener=screener, interval=timeframe, symbols=[full_symbol])
@@ -334,8 +334,8 @@ def smart_volume_scan(
         return []
 
     filtered: List[dict] = []
-    for coin in breakouts:
-        rsi = coin["indicators"].get("RSI", 50)
+    for asset in breakouts:
+        rsi = asset["indicators"].get("RSI", 50)
 
         if rsi_range == "oversold" and rsi >= 30:
             continue
@@ -345,12 +345,12 @@ def smart_volume_scan(
             continue
 
         recommendation = ""
-        if coin["changePercent"] > 0 and coin["volume_ratio"] >= 2.0:
+        if asset["changePercent"] > 0 and asset["volume_ratio"] >= 2.0:
             recommendation = "🚀 STRONG BUY" if rsi < 70 else "⚠️ OVERBOUGHT - CAUTION"
-        elif coin["changePercent"] < 0 and coin["volume_ratio"] >= 2.0:
+        elif asset["changePercent"] < 0 and asset["volume_ratio"] >= 2.0:
             recommendation = "📉 STRONG SELL" if rsi > 30 else "🛒 OVERSOLD - OPPORTUNITY?"
 
-        coin["trading_recommendation"] = recommendation
-        filtered.append(coin)
+        asset["trading_recommendation"] = recommendation
+        filtered.append(asset)
 
     return filtered[:limit]

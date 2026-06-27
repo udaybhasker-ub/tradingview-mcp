@@ -15,14 +15,8 @@ _TIMEFRAME_ALIASES = {
 
 # Exchanges that represent stock markets (not crypto)
 STOCK_EXCHANGES: Set[str] = {
-    "egx", "bist", "nasdaq", "nyse",
-    "amex", "nysearca", "pcx",          # NYSE Arca / AMEX (ETFs: GDX, GLD, XLE, SPY, QQQ, etc.)
-    "bursa", "myx", "klse", "ace", "leap",
-    "hkex", "hk", "hsi",
-    "asx",
-    "sse", "szse", "chn",
-    "twse", "tpex",
-    "tadawul", "tasi",                  # Saudi Stock Exchange (Tadawul) — All Share Index (TASI)
+    "nasdaq", "nyse",
+    "amex", "nysearca", "pcx",  # NYSE Arca / AMEX ETF aliases
 }
 
 EXCHANGE_SCREENER = {
@@ -37,36 +31,12 @@ EXCHANGE_SCREENER = {
     "bybit": "crypto",
     "okx": "crypto",
     "mexc": "crypto",
-    "bist": "turkey",
-    # Egyptian Stock Market Support
-    "egx": "egypt",
     "nasdaq": "america",
-    # Malaysia Stock Market Support
-    "bursa": "malaysia",
-    "myx": "malaysia",
-    "klse": "malaysia",
-    "ace": "malaysia",      # ACE Market (Access, Certainty, Efficiency)
-    "leap": "malaysia",     # LEAP Market (Leading Entrepreneur Accelerator Platform)
-    # Hong Kong Stock Market Support
-    "hkex": "hongkong",     # Hong Kong Exchange
-    "hk": "hongkong",       # Hong Kong (alternate)
-    "hsi": "hongkong",      # Hang Seng Index constituents
     "nyse": "america",
     # NYSE Arca / AMEX — ETFs (GDX, GLD, XLE, SPY, QQQ …) are listed here in TradingView
     "amex": "america",      # TradingView canonical prefix for NYSE Arca ETFs
     "nysearca": "america",  # alias: NYSE Arca (official name used by issuers)
     "pcx": "america",       # alias: Pacific Exchange (historical MIC code for NYSE Arca)
-    "asx": "australia",     # Australian Securities Exchange
-    # China A-Share Market Support
-    "sse": "china",         # Shanghai Stock Exchange (上海证券交易所)
-    "szse": "china",        # Shenzhen Stock Exchange (深圳证券交易所)
-    "chn": "china",         # China A-shares (combined alias)
-    # Taiwan Stock Market Support
-    "twse": "taiwan",       # Taiwan Stock Exchange (臺灣證券交易所)
-    "tpex": "taiwan",       # Taipei Exchange (櫃買中心, OTC market)
-    # Saudi Stock Market (Tadawul) — TradingView scanner uses /ksa/
-    "tadawul": "ksa",
-    "tasi": "ksa",          # alias: Tadawul All Share Index
 }
 
 # Venues TradingView serves for single-symbol TA (tradingview-ta) but NOT via the
@@ -93,41 +63,12 @@ _EXCHANGE_TV_PREFIX: dict = {
     "pcx": "AMEX",
     "nasdaq": "NASDAQ",
     "nyse": "NYSE",
-    "egx": "EGX",
-    "bist": "BIST",
-    "bursa": "MYX",
-    "myx": "MYX",
-    "klse": "MYX",
-    "ace": "MYX",
-    "leap": "MYX",
-    "hkex": "HKEX",
-    "hk": "HKEX",
-    "hsi": "HSI",
-    "asx": "ASX",
-    "sse": "SSE",
-    "szse": "SZSE",
-    "chn": "SSE",
-    "twse": "TWSE",
-    "tpex": "TPEX",
-    "tadawul": "TADAWUL",
-    "tasi": "TADAWUL",
 }
 
 _YAHOO_SYMBOL_ALIASES: dict = {
-    "TAIEX": "^TWII",
-    "TAIEX.TW": "^TWII",
-    "^TWII": "^TWII",
-    "TWSE:TAIEX": "^TWII",
-    "TWSE:IX0001": "^TWII",
 }
 
 _TRADINGVIEW_SYMBOL_ALIASES: dict = {
-    "TAIEX": "TWSE:IX0001",
-    "TAIEX.TW": "TWSE:IX0001",
-    "^TWII": "TWSE:IX0001",
-    "IX0001": "TWSE:IX0001",
-    "TWSE:TAIEX": "TWSE:IX0001",
-    "TWSE:IX0001": "TWSE:IX0001",
     # Spot metals in forex-pair notation — unambiguous (no venue lists a stock or
     # token called "XAUUSD"/"XAGUSD"), so these always map to the TVC CFD feed.
     "XAUUSD": "TVC:GOLD",
@@ -151,7 +92,7 @@ def get_tv_exchange_prefix(exchange: str) -> str:
     """Return the TradingView symbol prefix for *exchange* (e.g. ``AMEX`` for ``nysearca``).
 
     Falls back to ``exchange.upper()`` for exchanges not in the explicit map so
-    that crypto exchanges (KUCOIN, BINANCE, …) still work as before.
+    that unlisted venues still preserve their TradingView-style prefix.
     """
     return _EXCHANGE_TV_PREFIX.get(exchange.strip().lower(), exchange.upper())
 

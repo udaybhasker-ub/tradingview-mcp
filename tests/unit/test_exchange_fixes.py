@@ -31,13 +31,6 @@ class TestSanitizeExchangeNewAliases:
     def test_unknown_exchange_still_falls_back_to_default(self):
         assert sanitize_exchange("INVALID_EXCHANGE", "KUCOIN") == "KUCOIN"
 
-    def test_twse_still_valid(self):
-        assert sanitize_exchange("TWSE", "KUCOIN") == "twse"
-
-    def test_tpex_still_valid(self):
-        assert sanitize_exchange("TPEX", "KUCOIN") == "tpex"
-
-
 class TestExchangeScreenerNewEntries:
     """AMEX/NYSEARCA/PCX must map to the america screener."""
 
@@ -82,12 +75,6 @@ class TestGetTvExchangePrefix:
     def test_nyse_returns_NYSE_prefix(self):
         assert get_tv_exchange_prefix("nyse") == "NYSE"
 
-    def test_twse_returns_TWSE_prefix(self):
-        assert get_tv_exchange_prefix("twse") == "TWSE"
-
-    def test_tpex_returns_TPEX_prefix(self):
-        assert get_tv_exchange_prefix("tpex") == "TPEX"
-
     def test_crypto_exchange_returns_uppercase_fallback(self):
         """Crypto exchanges not in the map fall back to exchange.upper()."""
         assert get_tv_exchange_prefix("kucoin") == "KUCOIN"
@@ -128,13 +115,6 @@ class TestSymbolConstruction:
 
     def test_nasdaq_stock_uses_nasdaq_prefix(self):
         assert self._build_symbol("NASDAQ", "TSLA") == "NASDAQ:TSLA"
-
-    def test_twse_stock_uses_twse_prefix(self):
-        """Taiwan stocks must use TWSE prefix."""
-        assert self._build_symbol("TWSE", "2330") == "TWSE:2330"
-
-    def test_tpex_stock_uses_tpex_prefix(self):
-        assert self._build_symbol("TPEX", "3105") == "TPEX:3105"
 
     def test_crypto_with_kucoin(self):
         """Crypto fallback must still work."""

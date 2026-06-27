@@ -5,9 +5,8 @@ Uses feedparser (already installed as part of agent-reach dependencies).
 No API keys required. Pulls from free, public RSS feeds.
 
 Sources:
-  crypto: CoinDesk, Cointelegraph
   stocks: Yahoo Finance, MarketWatch (Top + Real-Time), CNBC
-  all:    Combined
+  all:    Stocks plus broader market feeds
 
 Note (2026-05-14): Original Reuters feeds (feeds.reuters.com) are deprecated
 since ~2020 — they return zero entries. Replaced with Yahoo Finance,
@@ -29,10 +28,6 @@ except ImportError:
 # ─── Feed Catalog ─────────────────────────────────────────────────────────────
 
 RSS_FEEDS: dict[str, list[dict]] = {
-    "crypto": [
-        {"url": "https://www.coindesk.com/arc/outboundfeeds/rss/", "name": "CoinDesk"},
-        {"url": "https://cointelegraph.com/rss", "name": "CoinTelegraph"},
-    ],
     "stocks": [
         {"url": "https://finance.yahoo.com/news/rssindex", "name": "Yahoo Finance"},
         {"url": "https://feeds.content.dowjones.io/public/rss/mw_topstories", "name": "MarketWatch Top Stories"},
@@ -43,8 +38,6 @@ RSS_FEEDS: dict[str, list[dict]] = {
         {"url": "https://finance.yahoo.com/news/rssindex", "name": "Yahoo Finance"},
         {"url": "https://feeds.content.dowjones.io/public/rss/mw_topstories", "name": "MarketWatch Top Stories"},
         {"url": "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114", "name": "CNBC Top News"},
-        {"url": "https://www.coindesk.com/arc/outboundfeeds/rss/", "name": "CoinDesk"},
-        {"url": "https://cointelegraph.com/rss", "name": "CoinTelegraph"},
     ],
 }
 
@@ -67,7 +60,7 @@ def fetch_news(
     Args:
         symbol:   Optional ticker filter. If provided, only returns headlines
                   that mention the symbol (case-insensitive). e.g. "AAPL", "BTC"
-        category: Feed group — "crypto" | "stocks" | "all"
+        category: Feed group — "stocks" | "all"
         limit:    Maximum number of items to return
 
     Returns:

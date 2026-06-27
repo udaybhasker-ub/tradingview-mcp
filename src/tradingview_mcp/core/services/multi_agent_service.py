@@ -7,7 +7,7 @@ All functions are pure business logic with no MCP coupling.
 from __future__ import annotations
 
 from tradingview_mcp.core.services.indicators import compute_metrics
-from tradingview_mcp.core.utils.validators import EXCHANGE_SCREENER
+from tradingview_mcp.core.utils.validators import get_market_type
 
 try:
     # Patched: route through resilience layer (retry + 60s TTL cache).
@@ -123,14 +123,14 @@ def run_multi_agent_analysis(
     Run a three-agent debate (Technical, Sentiment, Risk) and return a consensus.
 
     Args:
-        symbol:    Full symbol string with exchange prefix (e.g. 'KUCOIN:BTCUSDT').
+        symbol:    Full symbol string with exchange prefix (e.g. 'NASDAQ:AAPL').
         exchange:  Validated exchange identifier.
         timeframe: Validated timeframe string.
 
     Returns:
         Structured debate result with per-agent view and final decision.
     """
-    screener = EXCHANGE_SCREENER.get(exchange, "crypto")
+    screener = get_market_type(exchange)
 
     analysis = get_multiple_analysis(
         screener=screener,

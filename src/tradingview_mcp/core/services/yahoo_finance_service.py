@@ -1,12 +1,11 @@
 """
 Yahoo Finance Price Service via Webshare Rotating Proxy.
 
-Provides real-time quotes for stocks, ETFs, crypto pairs, indices
+Provides real-time quotes for stocks, ETFs, indices, FX, and other Yahoo symbols
 using the Yahoo Finance Chart API (no API key required).
 
 Works with any symbol Yahoo Finance supports:
   Stocks:  AAPL, TSLA, MSFT, NVDA, GOOGL
-  Crypto:  BTC-USD, ETH-USD, SOL-USD, BNB-USD
   ETFs:    SPY, QQQ, VTI
   Indices: ^GSPC (S&P500), ^DJI (Dow), ^IXIC (NASDAQ)
   FX:      EURUSD=X, GBPUSD=X
@@ -64,7 +63,7 @@ def get_price(symbol: str) -> dict:
     Get real-time price data for any Yahoo Finance symbol.
 
     Args:
-        symbol: Yahoo Finance symbol (e.g. "AAPL", "BTC-USD", "THYAO.IS", "^GSPC")
+        symbol: Yahoo Finance symbol (e.g. "AAPL", "SPY", "THYAO.IS", "^GSPC")
 
     Returns:
         dict with price, change, change_pct, currency, exchange, market_state
@@ -113,14 +112,13 @@ def get_prices_bulk(symbols: list[str]) -> list[dict]:
 
 def get_market_snapshot() -> dict:
     """
-    Get a snapshot of major market indices and crypto prices.
+    Get a snapshot of major market indices, FX rates, and liquid ETFs.
 
     Returns:
-        Dict with stocks (S&P500, NASDAQ, Dow), crypto (BTC, ETH), and FX
+        Dict with indices, FX, and ETFs
     """
     groups = {
         "indices": ["^GSPC", "^DJI", "^IXIC", "^VIX"],
-        "crypto":  ["BTC-USD", "ETH-USD", "SOL-USD", "BNB-USD"],
         "fx":      ["EURUSD=X", "GBPUSD=X", "JPYUSD=X"],
         "etfs":    ["SPY", "QQQ", "GLD"],
     }

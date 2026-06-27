@@ -367,7 +367,7 @@ def _scan_with_retry(q, cookies=None, cache_key: Optional[Tuple] = None):
 def resilient_get_multiple_analysis(screener, interval, symbols):
     """Drop-in replacement for tradingview_ta.get_multiple_analysis with the
     same resilience layer used by the screener calls (retry + cache + stale
-    fallback). Required because coin_analysis / combined_analysis /
+    fallback). Required because asset-analysis and multi-timeframe
     multi_timeframe_analysis use tradingview_ta directly and hit the same
     transient JSON errors when TradingView's scanner endpoint returns an
     empty body."""
@@ -546,7 +546,7 @@ def fetch_atr_for_ticker(
     """Fetch ATR(14) for a single ticker via TradingView's scanner endpoint.
 
     Thin wrapper around :func:`fetch_atr_for_tickers` kept for the single-symbol
-    call sites that don't need batching (``analyze_coin``,
+    call sites that don't need batching (``analyze_asset``,
     ``generate_egx_trade_plan``, ``analyze_egx_fibonacci``).
     """
     if not ticker or not screener_market:
@@ -656,7 +656,7 @@ def fetch_screener_multi_changes(
 
     Returns rows like:
       {
-        'symbol': 'KUCOIN:ABCUSDT',
+        'symbol': 'NASDAQ:AAPL',
         'changes': { '15m': 1.23, '1h': 2.34, '4h': -0.56, '1D': 3.21 },
         'base_indicators': { 'open': ..., 'close': ..., 'SMA20': ..., 'BB.upper': ..., 'BB.lower': ..., 'volume': ... }
       }

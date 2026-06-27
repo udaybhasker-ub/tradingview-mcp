@@ -18,7 +18,6 @@ from tradingview_mcp.core.utils.validators import (
     sanitize_exchange,
     get_tv_exchange_prefix,
     normalize_tradingview_symbol,
-    normalize_yahoo_symbol,
     is_stock_exchange,
     EXCHANGE_SCREENER,
     STOCK_EXCHANGES,
@@ -86,12 +85,6 @@ class TestGetTvExchangePrefix:
     def test_nasdaq_prefix_is_nasdaq(self):
         assert get_tv_exchange_prefix("nasdaq") == "NASDAQ"
 
-    def test_twse_prefix_is_twse(self):
-        assert get_tv_exchange_prefix("twse") == "TWSE"
-
-    def test_tpex_prefix_is_tpex(self):
-        assert get_tv_exchange_prefix("tpex") == "TPEX"
-
     def test_crypto_exchange_falls_back_to_upper(self):
         """Crypto exchanges not in the map still get uppercased correctly."""
         assert get_tv_exchange_prefix("kucoin") == "KUCOIN"
@@ -114,48 +107,12 @@ class TestGetTvExchangePrefix:
         full_symbol = symbol.upper() if ":" in symbol else f"{get_tv_exchange_prefix(exchange)}:{symbol.upper()}"
         assert full_symbol == "AMEX:GDX"
 
-    def test_full_symbol_construction_twse(self):
-        """Taiwan stock 2330 (TSMC) must get TWSE prefix."""
-        exchange = sanitize_exchange("TWSE", "KUCOIN")  # → "twse"
-        symbol = "2330"
-        full_symbol = symbol.upper() if ":" in symbol else f"{get_tv_exchange_prefix(exchange)}:{symbol.upper()}"
-        assert full_symbol == "TWSE:2330"
-
-    def test_full_symbol_construction_tpex(self):
-        exchange = sanitize_exchange("TPEX", "KUCOIN")  # → "tpex"
-        symbol = "3105"
-        full_symbol = symbol.upper() if ":" in symbol else f"{get_tv_exchange_prefix(exchange)}:{symbol.upper()}"
-        assert full_symbol == "TPEX:3105"
-
     def test_pre_qualified_symbol_is_not_reprefixed(self):
         """If caller already passes 'AMEX:GDX', the prefix must not be doubled."""
         exchange = sanitize_exchange("AMEX", "KUCOIN")
         symbol = "AMEX:GDX"  # already qualified
         full_symbol = symbol.upper() if ":" in symbol else f"{get_tv_exchange_prefix(exchange)}:{symbol.upper()}"
         assert full_symbol == "AMEX:GDX"
-
-
-# ── Taiwan index aliases ──────────────────────────────────────────────────────
-
-class TestTaiwanIndexAliases:
-    """Common TAIEX aliases should resolve to provider-specific working symbols."""
-
-    @pytest.mark.parametrize("raw", ["TAIEX", "TAIEX.TW", "^TWII", "TWSE:TAIEX", "TWSE:IX0001"])
-    def test_taiex_aliases_resolve_to_yahoo_twii(self, raw):
-        assert normalize_yahoo_symbol(raw) == "^TWII"
-
-    @pytest.mark.parametrize("raw", ["TAIEX", "TAIEX.TW", "^TWII", "IX0001"])
-    def test_taiex_aliases_resolve_to_tradingview_ix0001(self, raw):
-        assert normalize_tradingview_symbol(raw, "twse") == "TWSE:IX0001"
-
-    def test_prequalified_taiex_resolves_to_tradingview_ix0001(self):
-        assert normalize_tradingview_symbol("TWSE:TAIEX", "twse") == "TWSE:IX0001"
-
-    def test_normal_stock_symbol_still_uses_exchange_prefix(self):
-        assert normalize_tradingview_symbol("2330", "twse") == "TWSE:2330"
-
-    def test_prequalified_normal_symbol_still_survives(self):
-        assert normalize_tradingview_symbol("TWSE:2330", "twse") == "TWSE:2330"
 
 
 # ── Regression: existing exchanges still work ─────────────────────────────────
@@ -170,12 +127,6 @@ class TestExistingExchangesUnchanged:
         ("mexc", "crypto"),
         ("nasdaq", "america"),
         ("nyse", "america"),
-        ("egx", "egypt"),
-        ("bist", "turkey"),
-        ("twse", "taiwan"),
-        ("tpex", "taiwan"),
-        ("sse", "china"),
-        ("szse", "china"),
     ])
     def test_existing_screener_routing(self, exchange, expected_screener):
         assert EXCHANGE_SCREENER[exchange] == expected_screener
