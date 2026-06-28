@@ -125,6 +125,31 @@ cd tradingview-mcp
 uv run tradingview-mcp
 ```
 
+### Remote OAuth For Claude Connector And Postman
+
+Set these environment variables when you want a hosted `streamable-http` deployment protected by OAuth:
+
+```bash
+MCP_AUTH_TOKEN=your-long-random-bearer-token
+MCP_PUBLIC_URL=https://your-app.up.railway.app
+```
+
+Then run the HTTP transport:
+
+```bash
+uv run tradingview-mcp streamable-http --host 0.0.0.0 --port 8000
+```
+
+OAuth behavior:
+
+- `/.well-known/oauth-authorization-server` advertises the auth metadata
+- `/.well-known/oauth-protected-resource` and `/.well-known/oauth-protected-resource/mcp` advertise MCP resource metadata
+- `/register` supports dynamic client registration
+- `/authorize` shows a login form where you enter `MCP_AUTH_TOKEN`
+- `/token` exchanges the PKCE auth code for bearer tokens
+
+This matches the same shared-token-plus-login-form pattern used by `my-ibkr-portfolio`, which is friendlier to Postman than an auto-approve redirect-only flow.
+
 ---
 
 ## 🛠️ Troubleshooting

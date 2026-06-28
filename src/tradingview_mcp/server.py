@@ -19,9 +19,9 @@ from typing import Any, Optional
 from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions
 from mcp.server.fastmcp import FastMCP
 from pydantic import AnyHttpUrl
-from starlette.responses import PlainTextResponse, Response
+from starlette.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response
 
-from tradingview_mcp.core.auth import SharedSecretOAuthProvider
+from tradingview_mcp.core.auth import OAuthError, SharedSecretOAuthServer, render_authorize_form
 
 # ── Service imports ────────────────────────────────────────────────────────────
 from tradingview_mcp.core.services.screener_service import (
@@ -77,7 +77,7 @@ except ImportError:
 
 # ── MCP server instance ────────────────────────────────────────────────────────
 
-def _build_auth() -> tuple[SharedSecretOAuthProvider | None, AuthSettings | None]:
+def _build_auth() -> tuple[SharedSecretOAuthServer | None, AuthSettings | None]:
     """Configure OAuth from env vars, if MCP_AUTH_TOKEN is set.
 
     Claude.ai's remote connector flow requires an OAuth handshake even for
@@ -98,7 +98,7 @@ def _build_auth() -> tuple[SharedSecretOAuthProvider | None, AuthSettings | None
     if "://" not in public_url:
         public_url = f"https://{public_url}"
 
-    provider = SharedSecretOAuthProvider(token)
+    auth_server = SharedSecretOAuthServer(token, "TradingView Multi-Market Screener")
     settings = AuthSettings(
         issuer_url=AnyHttpUrl(public_url),
         resource_server_url=AnyHttpUrl(f"{public_url.rstrip('/')}/mcp"),
@@ -108,7 +108,7 @@ def _build_auth() -> tuple[SharedSecretOAuthProvider | None, AuthSettings | None
             default_scopes=["*"],
         ),
     )
-    return provider, settings
+    return auth_server, settings
 
 
 _auth_provider, _auth_settings = _build_auth()
@@ -121,7 +121,7 @@ mcp = FastMCP(
         "Tools: top_gainers, top_losers, bollinger_scan, asset_analysis, multi_agent_analysis, "
         "volume_breakout_scanner, us_sector_scan, stock_extended_hours, and options tools."
     ),
-    auth_server_provider=_auth_provider,
+    token_verifier=_auth_provider,
     auth=_auth_settings,
 )
 
@@ -169,10 +169,49 @@ def _json_response(payload: Any, status_code: int = 200) -> Response:
     )
 
 
+def _cors_json_response(payload: Any, status_code: int = 200) -> Response:
+    response = _json_response(payload, status_code=status_code)
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, MCP-Protocol-Version"
+    return response
+
+
+def _issuer_url(request) -> str:
+    public_url = os.environ.get("MCP_PUBLIC_URL")
+    if public_url:
+        if "://" not in public_url:
+            public_url = f"https://{public_url}"
+        return public_url.rstrip("/")
+    return str(request.base_url).rstrip("/")
+
+
+def _resource_metadata_url(request) -> str:
+    return f"{_issuer_url(request)}/.well-known/oauth-protected-resource"
+
+
 def _auth_error(detail: str, status_code: int = 401) -> Response:
     response = _json_response({"error": detail}, status_code=status_code)
-    response.headers["WWW-Authenticate"] = "Bearer"
+    if _auth_settings is not None:
+        response.headers["WWW-Authenticate"] = f'Bearer resource_metadata="{_resource_metadata_url_placeholder()}"'
+    else:
+        response.headers["WWW-Authenticate"] = "Bearer"
     return response
+
+
+def _auth_error_for_request(request, detail: str, status_code: int = 401) -> Response:
+    response = _json_response({"error": detail}, status_code=status_code)
+    if _auth_settings is not None:
+        response.headers["WWW-Authenticate"] = f'Bearer resource_metadata="{_resource_metadata_url(request)}"'
+    else:
+        response.headers["WWW-Authenticate"] = "Bearer"
+    return response
+
+
+def _resource_metadata_url_placeholder() -> str:
+    if _auth_settings is None:
+        return ""
+    return f"{str(_auth_settings.issuer_url).rstrip('/')}/.well-known/oauth-protected-resource"
 
 
 def _coerce_bool(value: Any) -> bool:
@@ -356,10 +395,11 @@ def _require_bearer_auth(request) -> Response | None:
     header = request.headers.get("authorization", "")
     scheme, _, provided = header.partition(" ")
     if scheme.lower() != "bearer" or not provided:
-        return _auth_error("missing bearer token")
-    if not secrets.compare_digest(provided.strip(), token):
-        return _auth_error("invalid bearer token", status_code=403)
-    return None
+        return _auth_error_for_request(request, "missing bearer token")
+    provided_token = provided.strip()
+    if _auth_provider is not None and _auth_provider.is_valid_bearer_token(provided_token):
+        return None
+    return _auth_error_for_request(request, "invalid bearer token", status_code=403)
 
 
 async def _run_rest_handler(
@@ -397,6 +437,150 @@ async def rest_routes(request):
         }
     )
 
+
+if _auth_provider is not None and _auth_settings is not None:
+    def _authorization_server_metadata(request) -> dict[str, Any]:
+        issuer = _issuer_url(request)
+        return {
+            "issuer": issuer,
+            "authorization_endpoint": f"{issuer}/authorize",
+            "token_endpoint": f"{issuer}/token",
+            "registration_endpoint": f"{issuer}/register",
+            "response_types_supported": ["code"],
+            "grant_types_supported": ["authorization_code", "refresh_token"],
+            "code_challenge_methods_supported": ["S256"],
+            "token_endpoint_auth_methods_supported": ["none"],
+        }
+
+
+    def _protected_resource_metadata(request) -> dict[str, Any]:
+        issuer = _issuer_url(request)
+        return {
+            "resource": f"{issuer}/mcp",
+            "authorization_servers": [issuer],
+            "bearer_methods_supported": ["header"],
+        }
+
+
+    @mcp.custom_route("/.well-known/oauth-authorization-server", methods=["GET", "OPTIONS"])
+    async def oauth_authorization_server_metadata(request):
+        if request.method == "OPTIONS":
+            return _cors_json_response({})
+        return _cors_json_response(_authorization_server_metadata(request))
+
+
+    @mcp.custom_route("/.well-known/openid-configuration", methods=["GET", "OPTIONS"])
+    async def openid_configuration(request):
+        if request.method == "OPTIONS":
+            return _cors_json_response({})
+        return _cors_json_response(_authorization_server_metadata(request))
+
+
+    @mcp.custom_route("/.well-known/oauth-protected-resource/mcp", methods=["GET", "OPTIONS"])
+    async def protected_resource_metadata_mcp(request):
+        if request.method == "OPTIONS":
+            return _cors_json_response({})
+        return _cors_json_response(_protected_resource_metadata(request))
+
+
+    @mcp.custom_route("/register", methods=["POST", "OPTIONS"])
+    async def oauth_register(request):
+        if request.method == "OPTIONS":
+            return _cors_json_response({})
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        redirect_uris = body.get("redirect_uris")
+        if not isinstance(redirect_uris, list):
+            return _cors_json_response(
+                {
+                    "error": "invalid_client_metadata",
+                    "error_description": "redirect_uris is required",
+                },
+                status_code=400,
+            )
+        redirect_uris = [uri for uri in redirect_uris if isinstance(uri, str)]
+        try:
+            client = _auth_provider.register_client(redirect_uris, body.get("client_name"))
+        except OAuthError as exc:
+            return _cors_json_response({"error": exc.error, "error_description": exc.description}, status_code=exc.status_code)
+        return _cors_json_response(
+            {
+                "client_id": client.client_id,
+                "redirect_uris": [str(uri) for uri in client.redirect_uris],
+                "token_endpoint_auth_method": "none",
+                "grant_types": ["authorization_code", "refresh_token"],
+                "response_types": ["code"],
+            },
+            status_code=201,
+        )
+
+
+    @mcp.custom_route("/authorize", methods=["GET", "POST"])
+    async def oauth_authorize(request):
+        if request.method == "GET":
+            params = _auth_provider.extract_authorize_params(dict(request.query_params))
+            try:
+                _auth_provider.validate_authorize_request(params)
+            except OAuthError as exc:
+                return _json_response({"error": exc.error, "error_description": exc.description}, status_code=exc.status_code)
+            return HTMLResponse(render_authorize_form(mcp.name, params))
+
+        form = await request.form()
+        raw_form = dict(form)
+        params = _auth_provider.extract_authorize_params(raw_form)
+        try:
+            _auth_provider.validate_authorize_request(params)
+        except OAuthError as exc:
+            return _json_response({"error": exc.error, "error_description": exc.description}, status_code=exc.status_code)
+
+        submitted_token = raw_form.get("token")
+        if not isinstance(submitted_token, str) or not secrets.compare_digest(submitted_token, os.environ["MCP_AUTH_TOKEN"]):
+            return HTMLResponse(render_authorize_form(mcp.name, params, "Incorrect token. Try again."), status_code=401)
+
+        redirect_url = _auth_provider.create_authorization_redirect(params)
+        return RedirectResponse(redirect_url, status_code=302, headers={"Cache-Control": "no-store"})
+
+
+    @mcp.custom_route("/token", methods=["POST", "OPTIONS"])
+    async def oauth_token(request):
+        if request.method == "OPTIONS":
+            return _cors_json_response({})
+
+        form = await request.form()
+        grant_type = form.get("grant_type")
+        client_id = form.get("client_id")
+        if not isinstance(grant_type, str) or not isinstance(client_id, str):
+            return _cors_json_response({"error": "invalid_request", "error_description": "grant_type and client_id are required"}, status_code=400)
+
+        try:
+            if grant_type == "authorization_code":
+                code = form.get("code")
+                redirect_uri = form.get("redirect_uri")
+                code_verifier = form.get("code_verifier")
+                if not all(isinstance(value, str) for value in (code, redirect_uri, code_verifier)):
+                    raise OAuthError("invalid_request", "code, redirect_uri, and code_verifier are required")
+                payload = _auth_provider.exchange_code(
+                    client_id=client_id,
+                    code=code,
+                    redirect_uri=redirect_uri,
+                    code_verifier=code_verifier,
+                )
+            elif grant_type == "refresh_token":
+                refresh_token = form.get("refresh_token")
+                if not isinstance(refresh_token, str):
+                    raise OAuthError("invalid_request", "refresh_token is required")
+                payload = _auth_provider.exchange_refresh_token(client_id=client_id, refresh_token=refresh_token)
+            else:
+                raise OAuthError("unsupported_grant_type", "Only authorization_code and refresh_token are supported")
+        except OAuthError as exc:
+            return _cors_json_response({"error": exc.error, "error_description": exc.description}, status_code=400)
+
+        response = _cors_json_response(payload)
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Pragma"] = "no-cache"
+        return response
 
 # ── Screener tools ─────────────────────────────────────────────────────────────
 
