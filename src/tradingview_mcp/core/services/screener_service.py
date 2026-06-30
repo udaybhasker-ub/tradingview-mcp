@@ -898,9 +898,9 @@ def run_multi_timeframe_analysis(
     exchange: str,
 ) -> dict:
     """
-    Multi-timeframe alignment analysis (Weekly → Daily → 4H → 1H → 15m).
+    Multi-timeframe alignment analysis (Monthly → Weekly → Daily → 4H → 1H → 15m).
 
-    Runs analysis across 5 timeframes and computes a directional consensus.
+    Runs analysis across 6 timeframes and computes a directional consensus.
 
     Args:
         symbol:   Full symbol string with exchange prefix (e.g. 'NASDAQ:AAPL').
@@ -925,8 +925,9 @@ def run_multi_timeframe_analysis(
     # the same fix analyze_asset already uses (see resolve_screener_for_symbol).
     from tradingview_mcp.core.utils.validators import resolve_screener_for_symbol
     screener = resolve_screener_for_symbol(symbol, exchange)
-    timeframes = ["1W", "1D", "4h", "1h", "15m"]
+    timeframes = ["1M", "1W", "1D", "4h", "1h", "15m"]
     tf_labels = {
+        "1M": "Monthly (Macro Trend)",
         "1W": "Weekly (Trend Bias)",
         "1D": "Daily (Swing Setup)",
         "4h": "4-Hour (Refinement)",
@@ -937,7 +938,7 @@ def run_multi_timeframe_analysis(
     tf_results: dict = {}
     alignment_scores: list[int] = []
 
-    # Fast-fail guards: 5 timeframes × (~5s retries + 15s cooldown) ≈ 100s
+    # Fast-fail guards: 6 timeframes × (~5s retries + 15s cooldown) ≈ 120s
     # when upstream cliffs. Bail after N consecutive failures, or when the
     # wall-clock budget is gone, so the tool returns in bounded time with
     # whatever timeframes did succeed (or an error envelope on zero success).
@@ -980,7 +981,7 @@ def run_multi_timeframe_analysis(
             indicators = data.indicators
             # Backfill ATR per-timeframe — the ATR column on the scanner is
             # resolution-suffixed, so we cannot share the response across the
-            # 5 timeframes. One POST per timeframe is acceptable (5 total)
+            # 6 timeframes. One POST per timeframe is acceptable (6 total)
             # because run_multi_timeframe_analysis is a single-symbol path.
             if indicators.get("ATR") is None:
                 from tradingview_mcp.core.services.screener_provider import fetch_atr_for_ticker
@@ -1034,13 +1035,15 @@ def run_multi_timeframe_analysis(
     all_bullish = all(s > 0 for s in alignment_scores) if alignment_scores else False
     all_bearish = all(s < 0 for s in alignment_scores) if alignment_scores else False
 
+    bullish_majority = len(timeframes) // 2 + 1
+
     if all_bullish:
         alignment, confidence, action = "FULLY ALIGNED BULLISH", "Very High", "STRONG BUY - All timeframes bullish. Look for pullback entry on 1H/15m."
     elif all_bearish:
         alignment, confidence, action = "FULLY ALIGNED BEARISH", "Very High", "STRONG SELL - All timeframes bearish. Avoid longs."
-    elif total_score >= 3:
+    elif total_score >= bullish_majority:
         alignment, confidence, action = "MOSTLY BULLISH", "High", "BUY - Majority of timeframes bullish. Enter on 4H/1H pullback to support."
-    elif total_score <= -3:
+    elif total_score <= -bullish_majority:
         alignment, confidence, action = "MOSTLY BEARISH", "High", "SELL - Majority of timeframes bearish. Avoid catching the falling knife."
     elif total_score > 0:
         alignment, confidence, action = "LEAN BULLISH", "Medium", "CAUTIOUS BUY - Some bullish signals but not fully aligned. Wait for better setup."
@@ -1072,11 +1075,12 @@ def run_multi_timeframe_analysis(
             "action": action,
             "entry_timeframe": "1H or 4H pullback" if total_score > 0 else "Wait for alignment",
             "rules": [
+                "Monthly sets MACRO trend and regime",
                 "Weekly sets BIAS (direction only, not entries)",
                 "Daily finds SETUP (swing level, confluence)",
                 "4H refines entry zone",
                 "1H/15m triggers entry with tight stop",
-                "Never trade against Weekly + Daily combined direction",
+                "Never trade against Monthly + Weekly combined direction",
             ],
         },
     }

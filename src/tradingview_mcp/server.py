@@ -129,7 +129,7 @@ mcp = FastMCP(
 _REST_ROUTES = {
     "GET /api/assets/{symbol}/analysis": "Preferred alias for single-asset technical analysis. Optional query: ?exchange=NASDAQ",
     "GET /api/assets/{symbol}/multi-agent-analysis": "Three-agent technical/sentiment/risk debate. Optional query: ?exchange=NASDAQ",
-    "GET /api/assets/{symbol}/multi-timeframe-analysis": "Weekly to intraday alignment. Optional query: ?exchange=NASDAQ",
+    "GET /api/assets/{symbol}/multi-timeframe-analysis": "Monthly to intraday alignment. Optional query: ?exchange=NASDAQ",
     "GET /api/assets/{symbol}/volume-confirmation": "Single-asset volume confirmation analysis. Optional query: ?exchange=NASDAQ",
     "GET /api/markets/{exchange}/gainers": "Top movers by exchange.",
     "GET /api/markets/{exchange}/losers": "Top losers by exchange.",
@@ -907,7 +907,7 @@ def us_sector_scan(sector: str = "", timeframe: str = "1D") -> dict:
 
 @mcp.tool()
 def multi_timeframe_analysis(symbol: str, exchange: str = "NASDAQ") -> dict:
-    """Multi-timeframe alignment analysis (Weekly → Daily → 4H → 1H → 15m).
+    """Multi-timeframe alignment analysis (Monthly → Weekly → Daily → 4H → 1H → 15m).
 
     Args:
         symbol: U.S. symbol like "AAPL", "NVDA", "SPY", or "GDX"

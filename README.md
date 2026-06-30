@@ -397,7 +397,7 @@ Example prompt: "Compare all 9 strategies on MSFT for 2 years"
 | `screen_stocks` | Multi-exchange screener with 20+ filter criteria |
 | `scan_by_signal` | Scan by signal type (oversold, trending, breakout...) |
 | `get_candlestick_patterns` | 15 candlestick pattern detector |
-| `get_multi_timeframe_analysis` | Weekly→Daily→4H→1H→15m alignment analysis |
+| `get_multi_timeframe_analysis` | Monthly→Weekly→Daily→4H→1H→15m alignment analysis |
 
 ---
 
