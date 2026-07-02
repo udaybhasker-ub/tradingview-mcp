@@ -40,6 +40,73 @@ def _etf_metrics(sym: str, data) -> dict:
     }
 
 
+def multi_time_frame_us_sectors() -> dict:
+    """
+    Return U.S. sector heat across the core swing-investor frames: 1D, 1W, 1M.
+
+    The payload includes per-timeframe ranked heatmaps plus a sector-centric
+    matrix so downstream clients can render either tables or heatmaps without
+    reshaping the response.
+    """
+    from tradingview_mcp.core.data.us_sectors import (
+        get_all_sectors,
+        get_etf_symbol,
+        SECTOR_DISPLAY_NAMES,
+    )
+
+    if not _TA_AVAILABLE:
+        return {"error": "tradingview_ta is missing; run `uv sync`."}
+
+    screener = EXCHANGE_SCREENER.get("amex", "america")
+    timeframes = ["1D", "1W", "1M"]
+    all_sectors = get_all_sectors()
+    etf_symbols = [get_etf_symbol(sector) for sector in all_sectors]
+
+    heatmaps_by_timeframe: dict[str, List[dict]] = {}
+    sectors: List[dict] = [
+        {
+            "sector": sector_key,
+            "display_name": SECTOR_DISPLAY_NAMES.get(sector_key, sector_key),
+            "etf_proxy": symbol,
+            "changes": {},
+        }
+        for sector_key, symbol in zip(all_sectors, etf_symbols)
+    ]
+
+    for timeframe in timeframes:
+        try:
+            analysis = get_multiple_analysis(screener=screener, interval=timeframe, symbols=etf_symbols)
+        except Exception as exc:
+            return {"error": f"Analysis failed for {timeframe}: {exc}"}
+
+        heatmap: List[dict] = []
+        for sector_entry in sectors:
+            data = analysis.get(sector_entry["etf_proxy"])
+            if data is None:
+                continue
+            try:
+                row = _etf_metrics(sector_entry["etf_proxy"], data)
+            except Exception:
+                continue
+            row["sector"] = sector_entry["sector"]
+            row["display_name"] = sector_entry["display_name"]
+            heatmap.append(row)
+            sector_entry["changes"][timeframe] = row["changePercent"]
+
+        heatmap.sort(key=lambda x: x["changePercent"], reverse=True)
+        heatmaps_by_timeframe[timeframe] = heatmap
+
+    sectors.sort(key=lambda x: x["changes"].get("1D", float("-inf")), reverse=True)
+    return {
+        "market": "US",
+        "timeframes": timeframes,
+        "method": "SPDR sector ETF proxies",
+        "available_sectors": all_sectors,
+        "heatmaps_by_timeframe": heatmaps_by_timeframe,
+        "sectors": sectors,
+    }
+
+
 def scan_us_sector(sector: str = "", timeframe: str = "1D", limit: int = 20) -> dict:
     """
     Show US GICS sector heat via SPDR sector ETF proxies (XLK, XLF, XLE, ...).

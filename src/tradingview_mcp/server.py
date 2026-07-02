@@ -40,7 +40,7 @@ from tradingview_mcp.core.services.scanner_service import (
 )
 from tradingview_mcp.core.services.multi_agent_service import run_multi_agent_analysis
 from tradingview_mcp.core.services.coinlist import load_symbols
-from tradingview_mcp.core.services.us_service import scan_us_sector
+from tradingview_mcp.core.services.us_service import scan_us_sector, multi_time_frame_us_sectors
 from tradingview_mcp.core.services.news_service import fetch_news_summary
 from tradingview_mcp.core.services.yahoo_finance_service import (
     get_price,
@@ -140,6 +140,7 @@ _REST_ROUTES = {
     "GET /api/markets/{exchange}/volume-breakouts": "Volume breakout scan.",
     "GET /api/markets/{exchange}/smart-volume": "Volume + RSI scan.",
     "GET /api/markets/us/sectors": "U.S. sector ETF heatmap.",
+    "GET /api/market/us/sectors/multi-time-frame": "U.S. sector ETF heatmap across 1D, 1W, and 1M.",
     "GET /api/news": "RSS financial news summary.",
     "GET /api/yahoo/price/{symbol}": "Yahoo quote endpoint.",
     "GET /api/yahoo/market-snapshot": "Indices, FX, and ETF snapshot.",
@@ -1263,6 +1264,14 @@ async def rest_us_sectors(request):
         request,
         us_sector_scan,
         specs={"sector": (str, ""), "timeframe": (str, "1D")},
+    )
+
+
+@mcp.custom_route("/api/market/us/sectors/multi-time-frame", methods=["GET"])
+async def rest_us_sectors_multi_time_frame(request):
+    return await _run_rest_handler(
+        request,
+        multi_time_frame_us_sectors,
     )
 
 
