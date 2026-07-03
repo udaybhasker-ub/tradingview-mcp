@@ -58,6 +58,40 @@ def _get_previous_close(chart_result: dict) -> Optional[float]:
     return meta.get("previousClose") or meta.get("chartPreviousClose")
 
 
+# Yahoo's chart API meta.exchangeName codes -> the TradingView exchange candidate
+# strings used by server.py's asset routes (nasdaq/nyse/amex). Only the US-equity
+# codes we can actually act on are mapped; anything else (foreign venues, OTC/pink
+# sheets, etc.) falls through to None so the caller keeps its existing fallback
+# behavior instead of guessing wrong.
+_YAHOO_EXCHANGE_TO_TV_CANDIDATE: dict[str, str] = {
+    "NMS": "nasdaq",  # Nasdaq Global Select Market
+    "NGM": "nasdaq",  # Nasdaq Global Market
+    "NCM": "nasdaq",  # Nasdaq Capital Market
+    "NYQ": "nyse",    # NYSE
+    "ASE": "amex",    # NYSE American (AMEX)
+    "PCX": "amex",    # NYSE Arca — TradingView serves these under the AMEX prefix
+    "BATS": "nasdaq", # Cboe BZX — most overlap with NASDAQ-listed names
+}
+
+
+def resolve_us_stock_exchange(symbol: str) -> Optional[str]:
+    """Best-effort, single-call listing-exchange lookup via Yahoo's chart API meta
+    (the same endpoint get_price() already uses) — returns one of "nasdaq"/"nyse"/
+    "amex", or None if the quote fails or Yahoo's exchange code isn't one of the
+    handful mapped above.
+
+    Meant to short-circuit server.py's nasdaq->nyse->amex probe cascade (which
+    otherwise costs up to 3 sequential tradingview_ta calls) with a single fast
+    guess for the common case. Callers should still fall back to that cascade when
+    this returns None — a wrong Yahoo mapping, a delisted symbol, or a Yahoo outage
+    all resolve to None here rather than to a guess we're not confident in."""
+    data = get_price(symbol)
+    if "error" in data:
+        return None
+    yahoo_exchange = str(data.get("exchange") or "").strip().upper()
+    return _YAHOO_EXCHANGE_TO_TV_CANDIDATE.get(yahoo_exchange)
+
+
 def get_price(symbol: str) -> dict:
     """
     Get real-time price data for any Yahoo Finance symbol.

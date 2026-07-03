@@ -45,6 +45,7 @@ from tradingview_mcp.core.services.news_service import fetch_news_summary
 from tradingview_mcp.core.services.yahoo_finance_service import (
     get_price,
     get_market_snapshot,
+    resolve_us_stock_exchange,
 )
 from tradingview_mcp.core.services.extended_hours_service import get_extended_hours_price
 from tradingview_mcp.core.services.options_service import (
@@ -284,6 +285,17 @@ def _candidate_exchanges_for_symbol(symbol: str, exchange_override: str | None =
         return bare_symbol, [prefixed_exchange]
     if bare_symbol in _COMMON_AMEX_SYMBOLS:
         return bare_symbol, ["amex", "nasdaq", "nyse"]
+    # Fast path: ask Yahoo (one HTTP call, already used elsewhere in this service for
+    # spot quotes) which venue this symbol actually lists on, and try that first —
+    # this is what turns the common case from up to 3 sequential tradingview_ta
+    # probes into 1. Falls back to the full nasdaq/nyse/amex cascade, in its original
+    # order (minus the now-redundant duplicate), if Yahoo can't resolve it or maps to
+    # an exchange we don't recognize — so a wrong/failed Yahoo guess never removes a
+    # candidate that the cascade would otherwise have tried.
+    yahoo_exchange = resolve_us_stock_exchange(bare_symbol)
+    if yahoo_exchange:
+        remaining = [c for c in _DEFAULT_US_STOCK_EXCHANGE_CANDIDATES if c != yahoo_exchange]
+        return bare_symbol, [yahoo_exchange, *remaining]
     return bare_symbol, _DEFAULT_US_STOCK_EXCHANGE_CANDIDATES
 
 
