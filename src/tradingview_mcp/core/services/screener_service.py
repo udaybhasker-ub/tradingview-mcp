@@ -54,10 +54,10 @@ except ImportError:
 #
 #   TRADINGVIEW_MCP_BATCH_MAX_CONSECUTIVE_FAILS (default 2)
 #       After N consecutive batch failures, stop iterating remaining batches
-#       — upstream is clearly down, further attempts just waste wall-clock.
+#       — upstream is clearly down, further attempts just waste elapsed time.
 #
 #   TRADINGVIEW_MCP_BATCH_BUDGET_S (default 30)
-#       Total wall-clock budget for the whole batched scan. When the budget
+#       Total elapsed-time budget for the whole batched scan. When the budget
 #       elapses we stop iterating, returning either the partial result or
 #       (if zero batches succeeded) raising BatchExecutionError.
 #
@@ -205,18 +205,18 @@ def fetch_trending_analysis(
 
     max_consec = _batch_max_consecutive_fails()
     budget_s = _batch_budget_s()
-    started_at = _time.time()
+    started_at = _time.monotonic()
     aborted_reason: Optional[str] = None
 
     total_batches = (len(symbols) + batch_size - 1) // batch_size
 
     for i in range(0, len(symbols), batch_size):
-        # Wall-clock guard: stop iterating once we've burned the budget.
+        # Elapsed-time guard: stop iterating once we've burned the budget.
         # This is the difference between "tool returned in 30s with a
         # partial / error envelope" and "tool hung for 2 minutes".
-        elapsed = _time.time() - started_at
+        elapsed = _time.monotonic() - started_at
         if elapsed >= budget_s:
-            aborted_reason = f"wall-clock budget ({budget_s:.0f}s) exhausted"
+            aborted_reason = f"elapsed-time budget ({budget_s:.0f}s) exhausted"
             try:
                 print(
                     f"[tradingview_mcp] fetch_trending_analysis aborted: "
@@ -952,29 +952,29 @@ def run_multi_timeframe_analysis(
 
     # Fast-fail guards: 6 timeframes × (~5s retries + 15s cooldown) ≈ 120s
     # when upstream cliffs. Bail after N consecutive failures, or when the
-    # wall-clock budget is gone, so the tool returns in bounded time with
+    # elapsed-time budget is gone, so the tool returns in bounded time with
     # whatever timeframes did succeed (or an error envelope on zero success).
     max_consec = _batch_max_consecutive_fails()
     budget_s = _batch_budget_s()
-    started_at = _time.time()
+    started_at = _time.monotonic()
     consecutive_failures = 0
     aborted_remaining: list[str] = []
 
     for tf in timeframes:
-        # Wall-clock guard.
-        if (_time.time() - started_at) >= budget_s:
+        # Elapsed-time guard.
+        if (_time.monotonic() - started_at) >= budget_s:
             aborted_remaining = [t for t in timeframes if t not in tf_results]
             try:
                 print(
                     f"[tradingview_mcp] run_multi_timeframe_analysis aborted: "
-                    f"wall-clock budget ({budget_s:.0f}s) exhausted; "
+                    f"elapsed-time budget ({budget_s:.0f}s) exhausted; "
                     f"skipped: {aborted_remaining}",
                     file=sys.stderr,
                 )
             except Exception:
                 pass
             for skip_tf in aborted_remaining:
-                tf_results[skip_tf] = {"error": "skipped: wall-clock budget exhausted"}
+                tf_results[skip_tf] = {"error": "skipped: elapsed-time budget exhausted"}
             break
 
         try:

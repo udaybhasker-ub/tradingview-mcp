@@ -202,3 +202,37 @@ def test_resilient_ta_returns_stale_on_persistent_failure(fast_retry, monkeypatc
     # Upstream now broken; stale fallback should kick in
     result = sp.resilient_get_multiple_analysis("egypt", "1D", ["EGX:ASCM"])
     assert result == {"EGX:ASCM": "good_payload"}
+
+
+def test_resilient_ta_serves_stale_immediately_during_failure_cooldown(monkeypatch):
+    """A recent hard failure plus stale cache should not incur cooldown sleep
+    and retry churn before serving the cached payload."""
+    monkeypatch.setenv("TRADINGVIEW_MCP_FAILURE_COOLDOWN_S", "30")
+    monkeypatch.setenv("TRADINGVIEW_MCP_RETRY_JITTER", "0")
+
+    cache_key = ("ta_multi_v1", "america", "1D", ("NYSE:NIQ",))
+    sp._cache_set(cache_key, {"NYSE:NIQ": "stale_payload"})
+    with sp._SCREENER_CACHE_LOCK:
+        ts, payload = sp._SCREENER_CACHE[cache_key]
+        sp._SCREENER_CACHE[cache_key] = (ts - 120.0, payload)
+
+    with sp._TA_FAILURE_LOCK:
+        sp._LAST_TA_FAILURE_TS = time.monotonic()
+
+    def fake_gma(*args, **kwargs):
+        raise AssertionError("upstream should not be called during failure cooldown when stale cache exists")
+
+    fake_module = mock.MagicMock()
+    fake_module.get_multiple_analysis = fake_gma
+    monkeypatch.setitem(__import__("sys").modules, "tradingview_ta", fake_module)
+
+    sleep_calls = []
+
+    def fake_sleep(seconds):
+        sleep_calls.append(seconds)
+
+    monkeypatch.setattr(sp._time, "sleep", fake_sleep)
+
+    result = sp.resilient_get_multiple_analysis("america", "1D", ["NYSE:NIQ"])
+    assert result == {"NYSE:NIQ": "stale_payload"}
+    assert sleep_calls == []

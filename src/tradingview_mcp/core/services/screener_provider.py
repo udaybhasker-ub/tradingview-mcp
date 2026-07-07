@@ -150,22 +150,29 @@ _TA_FAILURE_LOCK = _Lock()
 def _record_ta_failure() -> None:
     global _LAST_TA_FAILURE_TS
     with _TA_FAILURE_LOCK:
-        _LAST_TA_FAILURE_TS = _time.time()
+        _LAST_TA_FAILURE_TS = _time.monotonic()
+
+
+def _remaining_failure_cooldown_s() -> float:
+    """Return the remaining cooldown in seconds, if any."""
+    cooldown = _failure_cooldown_s()
+    if cooldown <= 0:
+        return 0.0
+    with _TA_FAILURE_LOCK:
+        ts = _LAST_TA_FAILURE_TS
+    if ts == 0.0:
+        return 0.0
+    elapsed = _time.monotonic() - ts
+    if elapsed >= cooldown:
+        return 0.0
+    return cooldown - elapsed
 
 
 def _wait_for_failure_cooldown() -> None:
     """If a previous call recently exhausted all retries, sleep until the
     cooldown elapses before starting a new retry sequence."""
-    cooldown = _failure_cooldown_s()
-    if cooldown <= 0:
-        return
-    with _TA_FAILURE_LOCK:
-        ts = _LAST_TA_FAILURE_TS
-    if ts == 0.0:
-        return
-    elapsed = _time.time() - ts
-    if elapsed < cooldown:
-        wait = cooldown - elapsed
+    wait = _remaining_failure_cooldown_s()
+    if wait > 0:
         try:
             print(
                 f"[tradingview_mcp] failure cooldown active, sleeping {wait:.1f}s",
@@ -266,11 +273,11 @@ def _ta_throttle_acquire() -> None:
     _TA_SEMAPHORE.acquire()
     try:
         with _TA_INTERVAL_LOCK:
-            now = _time.time()
+            now = _time.monotonic()
             wait = _min_interval_s() - (now - _TA_LAST_CALL_TS)
             if wait > 0:
                 _time.sleep(wait)
-                now = _time.time()
+                now = _time.monotonic()
             _TA_LAST_CALL_TS = now
     except BaseException:
         _TA_SEMAPHORE.release()
@@ -320,6 +327,19 @@ def _scan_with_retry(q, cookies=None, cache_key: Optional[Tuple] = None):
     If ``cache_key`` is provided and all retries fail, attempts to return a
     stale-but-usable cached payload before raising — callers that pass a key
     get stale-while-error behavior automatically."""
+    if cache_key is not None and _remaining_failure_cooldown_s() > 0:
+        stale = _cache_get_stale(cache_key)
+        if stale is not None:
+            age, payload = stale
+            try:
+                print(
+                    f"[tradingview_mcp] serving stale cache during failure cooldown "
+                    f"(age {age:.0f}s)",
+                    file=_sys.stderr,
+                )
+            except Exception:
+                pass
+            return payload
     _wait_for_failure_cooldown()
     delays = (0.0,) + _retry_delays()  # immediate try, then back off
     last_exc: Optional[BaseException] = None
@@ -381,6 +401,20 @@ def resilient_get_multiple_analysis(screener, interval, symbols):
     cached = _cache_get(cache_key)
     if cached is not None:
         return cached
+
+    if _remaining_failure_cooldown_s() > 0:
+        stale = _cache_get_stale(cache_key)
+        if stale is not None:
+            age, payload = stale
+            try:
+                print(
+                    f"[tradingview_mcp] serving stale TA cache during failure cooldown "
+                    f"(age {age:.0f}s, symbols={symbols})",
+                    file=_sys.stderr,
+                )
+            except Exception:
+                pass
+            return payload
 
     _wait_for_failure_cooldown()
     delays = (0.0,) + _retry_delays()

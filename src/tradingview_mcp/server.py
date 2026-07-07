@@ -39,7 +39,10 @@ from tradingview_mcp.core.services.scanner_service import (
     smart_volume_scan,
 )
 from tradingview_mcp.core.services.multi_agent_service import run_multi_agent_analysis
-from tradingview_mcp.core.services.coinlist import load_symbols
+from tradingview_mcp.core.services.coinlist import (
+    load_symbols,
+    resolve_us_stock_exchange_from_coinlists,
+)
 from tradingview_mcp.core.services.us_service import scan_us_sector, multi_time_frame_us_sectors
 from tradingview_mcp.core.services.news_service import fetch_news_summary
 from tradingview_mcp.core.services.yahoo_finance_service import (
@@ -283,6 +286,9 @@ def _candidate_exchanges_for_symbol(symbol: str, exchange_override: str | None =
                 "This server is focused on U.S. markets and only accepts NASDAQ, NYSE, AMEX, NYSEARCA, or PCX."
             )
         return bare_symbol, [prefixed_exchange]
+    local_exchange = resolve_us_stock_exchange_from_coinlists(bare_symbol)
+    if local_exchange:
+        return bare_symbol, [local_exchange]
     if bare_symbol in _COMMON_AMEX_SYMBOLS:
         return bare_symbol, ["amex", "nasdaq", "nyse"]
     # Fast path: ask Yahoo (one HTTP call, already used elsewhere in this service for
