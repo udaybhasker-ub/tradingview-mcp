@@ -311,6 +311,24 @@ def _is_exchange_miss_error(result: dict[str, Any]) -> bool:
     )
 
 
+class ExchangeResolutionError(Exception):
+    """Raised when exchange inference across candidates fails.
+
+    Carries a ``status_code`` so callers can distinguish a genuine "symbol
+    doesn't exist on any U.S. venue" (400 — the request itself was bad) from
+    "every candidate probe hit a transient upstream error" (502 — the
+    request was fine, TradingView/Yahoo just didn't answer). Conflating
+    these previously surfaced upstream scanner outages to API callers as
+    400 Bad Request, which is misleading and doesn't tell the caller to
+    just retry.
+    """
+
+    def __init__(self, payload: dict[str, Any], status_code: int):
+        super().__init__(json.dumps(payload, default=str))
+        self.payload = payload
+        self.status_code = status_code
+
+
 def _resolve_exchange_for_asset_routes(
     symbol: str,
     timeframe: str,
@@ -322,27 +340,45 @@ def _resolve_exchange_for_asset_routes(
         return candidates[0], None
 
     attempted_exchanges: list[str] = []
+    errors_by_exchange: dict[str, dict[str, Any]] = {}
     last_error: dict[str, Any] | None = None
+    # Always try every candidate exchange before giving up — a transient
+    # upstream error on the first candidate used to abort the cascade early
+    # (see _is_exchange_miss_error below), which meant a perfectly valid
+    # symbol on NYSE/AMEX would never even be attempted if the NASDAQ probe
+    # hit a scanner blip. Exhausting the candidates first and only THEN
+    # deciding whether this was a "not found" or an "upstream trouble"
+    # situation gives real fallback behavior instead of a false negative.
     for exchange in candidates:
         attempted_exchanges.append(exchange)
         probe = analyze_asset(bare_symbol, exchange, timeframe)
         if not isinstance(probe, dict) or "error" not in probe:
             return exchange, probe
         last_error = probe
-        if not _is_exchange_miss_error(probe):
-            break
+        errors_by_exchange[exchange] = probe
 
-    raise ValueError(
-        json.dumps(
-            {
-                "error": "exchange_inference_failed",
-                "symbol": bare_symbol,
-                "attempted_exchanges": attempted_exchanges,
-                "suggestion": "retry with ?exchange=NASDAQ, ?exchange=NYSE, or ?exchange=AMEX",
-                "last_error": last_error,
-            },
-            default=str,
-        )
+    # If every attempted exchange came back with a genuine "this symbol
+    # isn't here" error, the request itself was the problem — keep 400.
+    # If ANY attempt instead failed for a different (likely transient/
+    # upstream) reason, we can't actually conclude the symbol is missing;
+    # surface that as a 502 so callers know to retry rather than treating
+    # it as a bad request.
+    all_misses = all(_is_exchange_miss_error(err) for err in errors_by_exchange.values())
+    status_code = 400 if all_misses else 502
+
+    raise ExchangeResolutionError(
+        {
+            "error": "exchange_inference_failed" if all_misses else "upstream_exchange_probe_failed",
+            "symbol": bare_symbol,
+            "attempted_exchanges": attempted_exchanges,
+            "suggestion": (
+                "retry with ?exchange=NASDAQ, ?exchange=NYSE, or ?exchange=AMEX"
+                if all_misses
+                else "this looks like a transient upstream issue (e.g. TradingView scanner outage) — wait a bit and retry"
+            ),
+            "last_error": last_error,
+        },
+        status_code,
     )
 
 
@@ -371,6 +407,8 @@ async def _resolve_asset_route(
         if include_timeframe:
             params["timeframe"] = timeframe
         return _json_response(handler(**params))
+    except ExchangeResolutionError as exc:
+        return _json_response(exc.payload, status_code=exc.status_code)
     except ValueError as exc:
         try:
             return _json_response(json.loads(str(exc)), status_code=400)
@@ -1182,6 +1220,8 @@ async def rest_multi_timeframe_analysis(request):
             exchange_override=exchange_override,
         )
         return _json_response(multi_timeframe_analysis(symbol=bare_symbol, timeframes=timeframes, exchange=exchange))
+    except ExchangeResolutionError as exc:
+        return _json_response(exc.payload, status_code=exc.status_code)
     except ValueError as exc:
         try:
             return _json_response(json.loads(str(exc)), status_code=400)
