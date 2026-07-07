@@ -896,27 +896,39 @@ def scan_advanced_candle_patterns_single_tf(
 def run_multi_timeframe_analysis(
     symbol: str,
     exchange: str,
+    timeframes: list[str],
 ) -> dict:
     """
-    Multi-timeframe alignment analysis (Monthly → Weekly → Daily → 4H → 1H → 15m).
+    Multi-timeframe alignment analysis (Monthly → Weekly → Daily → 4H → 1H → 15m → 5m).
 
-    Runs analysis across 6 timeframes and computes a directional consensus.
+    Runs analysis across the caller-supplied timeframes and computes a
+    directional consensus. Output is always ordered by precedence (Monthly
+    first, 5-Min last) regardless of the order the caller passed them in.
 
     Args:
-        symbol:   Full symbol string with exchange prefix (e.g. 'NASDAQ:AAPL').
-        exchange: Validated exchange identifier.
+        symbol:     Full symbol string with exchange prefix (e.g. 'NASDAQ:AAPL').
+        exchange:   Validated exchange identifier.
+        timeframes: Required, non-empty list of timeframes to analyze (e.g.
+            ["1M", "1H", "1D"]). Case-insensitive. Response data is reordered
+            to canonical precedence regardless of input order.
 
     Returns:
         Multi-timeframe analysis dict with per-TF breakdown, alignment status,
         and trading recommendation.
+
+    Raises:
+        ValueError: if ``timeframes`` is empty or contains an unrecognized value.
     """
     from tradingview_mcp.core.services.indicators import (
         extract_extended_indicators,
         analyze_timeframe_context,
     )
+    from tradingview_mcp.core.utils.validators import normalize_timeframe_list
 
     if not _TA_AVAILABLE:
         return {"error": "tradingview_ta is missing; run `uv sync`."}
+
+    timeframes = normalize_timeframe_list(timeframes)
 
     # Screener follows the RESOLVED symbol's venue (e.g. XAUUSD→TVC:GOLD→"cfd",
     # EURUSD→FX_IDC→"forex"), not the caller's exchange guess. Without this,
@@ -925,7 +937,6 @@ def run_multi_timeframe_analysis(
     # the same fix analyze_asset already uses (see resolve_screener_for_symbol).
     from tradingview_mcp.core.utils.validators import resolve_screener_for_symbol
     screener = resolve_screener_for_symbol(symbol, exchange)
-    timeframes = ["1M", "1W", "1D", "4h", "1h", "15m"]
     tf_labels = {
         "1M": "Monthly (Macro Trend)",
         "1W": "Weekly (Trend Bias)",
@@ -933,6 +944,7 @@ def run_multi_timeframe_analysis(
         "4h": "4-Hour (Refinement)",
         "1h": "1-Hour (Entry Timing)",
         "15m": "15-Min (Execution)",
+        "5m": "5-Min (Execution)",
     }
 
     tf_results: dict = {}

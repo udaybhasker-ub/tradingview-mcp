@@ -133,6 +133,49 @@ def sanitize_timeframe(tf: str, default: str = "5m") -> str:
     return _TIMEFRAME_ALIASES.get(normalized, default)
 
 
+# Canonical precedence order for multi-timeframe alignment analysis: macro
+# (Monthly) down to execution (5m). Output ordering always follows this order
+# regardless of the order the caller listed timeframes in.
+TIMEFRAME_PRECEDENCE: list = ["1M", "1W", "1D", "4h", "1h", "15m", "5m"]
+
+
+def normalize_timeframe_list(timeframes) -> list:
+    """Validate a caller-supplied list of timeframes and reorder by precedence.
+
+    Unlike ``sanitize_timeframe``, invalid values raise ``ValueError`` instead
+    of silently falling back to a default — callers of multi-timeframe
+    analysis must pass timeframes explicitly, so a typo should surface rather
+    than get swallowed.
+
+    Args:
+        timeframes: Non-empty list of timeframe strings (case-insensitive,
+            e.g. "1H", "1d", "15M"). Duplicates are collapsed.
+
+    Returns:
+        The requested timeframes, deduplicated and reordered to
+        ``TIMEFRAME_PRECEDENCE`` order (Monthly -> Weekly -> Daily -> 4H ->
+        1H -> 15m -> 5m).
+
+    Raises:
+        ValueError: if ``timeframes`` is empty/None or contains a value that
+            doesn't map to a known timeframe.
+    """
+    if not timeframes:
+        raise ValueError("timeframes is required and must contain at least one value")
+
+    normalized: set = set()
+    for tf in timeframes:
+        key = (tf or "").strip().lower()
+        canonical = _TIMEFRAME_ALIASES.get(key)
+        if canonical is None:
+            raise ValueError(
+                f"invalid timeframe: {tf!r}; expected one of {sorted(ALLOWED_TIMEFRAMES)}"
+            )
+        normalized.add(canonical)
+
+    return [tf for tf in TIMEFRAME_PRECEDENCE if tf in normalized]
+
+
 def sanitize_exchange(ex: str, default: str = "kucoin") -> str:
     if not ex:
         return default

@@ -130,7 +130,7 @@ mcp = FastMCP(
 _REST_ROUTES = {
     "GET /api/assets/{symbol}/analysis": "Preferred alias for single-asset technical analysis. Optional query: ?exchange=NASDAQ",
     "GET /api/assets/{symbol}/multi-agent-analysis": "Three-agent technical/sentiment/risk debate. Optional query: ?exchange=NASDAQ",
-    "GET /api/assets/{symbol}/multi-timeframe-analysis": "Monthly to intraday alignment. Optional query: ?exchange=NASDAQ",
+    "GET /api/assets/{symbol}/multi-timeframe-analysis": "Alignment across requested timeframes, reordered Monthly->5m. Required query: ?timeframes=1M,1H,1D. Optional query: ?exchange=NASDAQ",
     "GET /api/assets/{symbol}/volume-confirmation": "Single-asset volume confirmation analysis. Optional query: ?exchange=NASDAQ",
     "GET /api/markets/{exchange}/gainers": "Top movers by exchange.",
     "GET /api/markets/{exchange}/losers": "Top losers by exchange.",
@@ -919,16 +919,20 @@ def us_sector_scan(sector: str = "", timeframe: str = "1D") -> dict:
 # ── Multi-timeframe analysis ───────────────────────────────────────────────────
 
 @mcp.tool()
-def multi_timeframe_analysis(symbol: str, exchange: str = "NASDAQ") -> dict:
-    """Multi-timeframe alignment analysis (Monthly → Weekly → Daily → 4H → 1H → 15m).
+def multi_timeframe_analysis(symbol: str, timeframes: list[str], exchange: str = "NASDAQ") -> dict:
+    """Multi-timeframe alignment analysis (Monthly → Weekly → Daily → 4H → 1H → 15m → 5m).
 
     Args:
         symbol: U.S. symbol like "AAPL", "NVDA", "SPY", or "GDX"
+        timeframes: Required, non-empty list of timeframes to analyze, e.g.
+            ["1M", "1H", "1D"]. Case-insensitive. Response data is always
+            reordered to canonical precedence (Monthly first, 5-Min last)
+            regardless of the order passed in.
         exchange: Exchange — NASDAQ, NYSE, AMEX, NYSEARCA, or PCX
     """
     exchange = _sanitize_us_exchange(exchange, "NASDAQ")
     full_symbol = normalize_tradingview_symbol(symbol, exchange)
-    return run_multi_timeframe_analysis(full_symbol, exchange)
+    return run_multi_timeframe_analysis(full_symbol, exchange, timeframes)
 
 
 # ── News tools ─────────────────────────────────────────────────────────────────
@@ -1161,7 +1165,28 @@ async def rest_multi_agent_analysis(request):
 
 @mcp.custom_route("/api/assets/{symbol}/multi-timeframe-analysis", methods=["GET"])
 async def rest_multi_timeframe_analysis(request):
-    return await _resolve_asset_route(request, "1D", multi_timeframe_analysis, include_timeframe=False)
+    auth_error = _require_bearer_auth(request)
+    if auth_error is not None:
+        return auth_error
+    try:
+        raw_symbol = request.path_params["symbol"]
+        timeframes_param = request.query_params.get("timeframes")
+        if not timeframes_param:
+            raise ValueError("missing required query parameter: timeframes (comma-separated, e.g. ?timeframes=1M,1H,1D)")
+        timeframes = [tf.strip() for tf in timeframes_param.split(",") if tf.strip()]
+        exchange_override = _normalize_exchange_override(request.query_params.get("exchange"))
+        bare_symbol, _ = _candidate_exchanges_for_symbol(raw_symbol, exchange_override)
+        exchange, probe_result = _resolve_exchange_for_asset_routes(
+            raw_symbol,
+            "1D",
+            exchange_override=exchange_override,
+        )
+        return _json_response(multi_timeframe_analysis(symbol=bare_symbol, timeframes=timeframes, exchange=exchange))
+    except ValueError as exc:
+        try:
+            return _json_response(json.loads(str(exc)), status_code=400)
+        except Exception:
+            return _json_response({"error": str(exc)}, status_code=400)
 
 
 @mcp.custom_route("/api/assets/{symbol}/volume-confirmation", methods=["GET"])
