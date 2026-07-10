@@ -922,7 +922,11 @@ def run_multi_timeframe_analysis(
     from tradingview_mcp.core.services.indicators import (
         extract_extended_indicators,
         analyze_timeframe_context,
+        compute_stock_score,
+        compute_trade_setup,
+        compute_trade_quality,
     )
+    from tradingview_mcp.core.utils.validators import is_stock_exchange
     from tradingview_mcp.core.utils.validators import normalize_timeframe_list
 
     if not _TA_AVAILABLE:
@@ -1007,26 +1011,81 @@ def run_multi_timeframe_analysis(
             bias_num = 1 if tf_context["bias"] == "Bullish" else -1 if tf_context["bias"] == "Bearish" else 0
             alignment_scores.append(bias_num)
 
-            tf_results[tf] = {
+            open_price = indicators.get("open")
+            high = indicators.get("high")
+            low = indicators.get("low")
+            close_price = indicators.get("close")
+            volume = indicators.get("volume", 0)
+
+            tf_entry: dict = {
                 "label": tf_labels.get(tf, tf),
                 "bias": tf_context["bias"],
                 "bias_reasons": tf_context["bias_reasons"],
                 "key_indicators": tf_context["key_indicators_for_timeframe"],
                 "advice": tf_context["advice"],
-                "price": metrics.get("price") if metrics else None,
-                "change_pct": metrics.get("change") if metrics else None,
-                "rsi": extended["rsi"],
-                "macd_crossover": extended["macd"]["crossover"],
-                "ema_trend": {
-                    "ema20": extended["ema"].get("ema20"),
-                    "ema50": extended["ema"].get("ema50"),
-                    "ema200": extended["ema"].get("ema200"),
+                "price_data": {
+                    "current_price": metrics.get("price") if metrics else None,
+                    "open": round(open_price, 6) if open_price else None,
+                    "high": round(high, 6) if high else None,
+                    "low": round(low, 6) if low else None,
+                    "close": round(close_price, 6) if close_price else None,
+                    "change_percent": metrics.get("change") if metrics else None,
+                    "volume": volume,
                 },
-                "volume_signal": extended["volume"]["signal"],
-                "market_structure": extended["market_structure"]["trend"],
-                "trend_strength": extended["market_structure"]["trend_strength"],
-                "momentum_aligned": extended["market_structure"]["momentum_aligned"],
+                "rsi": extended["rsi"],
+                "macd": extended["macd"],
+                "sma": extended["sma"],
+                "ema": extended["ema"],
+                "bollinger_bands": extended["bollinger_bands"],
+                "atr": extended["atr"],
+                "volume_analysis": extended["volume"],
+                "obv": extended["obv"],
+                "support_resistance": extended["support_resistance"],
+                "stochastic": extended["stochastic"],
+                "adx": extended["adx"],
+                "market_structure": extended["market_structure"],
+                "market_sentiment": {
+                    "overall_rating": metrics.get("rating") if metrics else None,
+                    "buy_sell_signal": metrics.get("signal") if metrics else None,
+                    "volatility": (
+                        "High" if metrics and metrics.get("bbw") and metrics["bbw"] > 0.05
+                        else "Medium" if metrics and metrics.get("bbw") and metrics["bbw"] > 0.02
+                        else "Low"
+                    ),
+                    "momentum": "Bullish" if metrics and metrics.get("change", 0) > 0 else "Bearish",
+                },
             }
+
+            if "vwap" in extended:
+                tf_entry["vwap"] = extended["vwap"]
+            if "vwma" in extended:
+                tf_entry["vwma"] = extended["vwma"]
+
+            if is_stock_exchange(exchange):
+                score_result = compute_stock_score(indicators)
+                if score_result:
+                    tf_entry["stock_score"] = score_result["score"]
+                    tf_entry["grade"] = score_result["grade"]
+                    tf_entry["trend_state"] = score_result["trend_state"]
+                    setup = compute_trade_setup(indicators)
+                    if setup:
+                        tf_entry["trade_setup"] = {
+                            "setup_types": setup["setup_types"],
+                            "entry_points": setup["entry_points"],
+                            "stop_loss": setup["stop_loss"],
+                            "stop_distance_pct": setup["stop_distance_pct"],
+                            "targets": setup["targets"],
+                            "risk_reward": setup["risk_reward"],
+                            "supports": setup["supports"],
+                            "resistances": setup["resistances"],
+                        }
+                        quality = compute_trade_quality(indicators, score_result["score"], setup)
+                        if quality:
+                            tf_entry["trade_quality_score"] = quality["trade_quality_score"]
+                            tf_entry["trade_quality"] = quality["quality"]
+                            tf_entry["trade_notes"] = quality["notes"]
+
+            tf_results[tf] = tf_entry
         except Exception as exc:
             tf_results[tf] = {"error": str(exc)}
             consecutive_failures += 1
