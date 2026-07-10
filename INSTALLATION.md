@@ -1,8 +1,10 @@
 # 🛠️ Installation Guide - TradingView MCP Server
 
+> ☁️ **This is the self-hosting guide (free, MIT).** Prefer to skip the setup entirely? The same 30+ tools are available hosted as one connector URL for Claude.ai, ChatGPT, Copilot & Cursor at **[pro.cryptosieve.com](https://pro.cryptosieve.com)** — from $9/mo, 3-day free trial.
+
 ## Prerequisites
 
-- **Python 3.8+** (Python 3.10+ recommended)
+- **Python 3.10-3.13**
 - **UV Package Manager** (for dependency management)
 - **Claude Desktop or Codex** (for MCP integration)
 - **Internet Connection** (for TradingView data access)

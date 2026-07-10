@@ -11,6 +11,7 @@ No business logic lives here. All computation is in core/services/*.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import os
 import secrets
@@ -44,16 +45,30 @@ from tradingview_mcp.core.services.coinlist import (
     resolve_us_stock_exchange_from_coinlists,
 )
 from tradingview_mcp.core.services.us_service import scan_us_sector, multi_time_frame_us_sectors
-from tradingview_mcp.core.services.news_service import fetch_news_summary
+from tradingview_mcp.core.services.marketaux_service import (
+    analyze_sentiment,
+    fetch_news_summary,
+)
 from tradingview_mcp.core.services.yahoo_finance_service import (
     get_price,
+    get_price_async,
     get_market_snapshot,
     resolve_us_stock_exchange,
 )
-from tradingview_mcp.core.services.extended_hours_service import get_extended_hours_price
+from tradingview_mcp.core.services.bitcoin_market_service import get_bitcoin_market_pulse
+from tradingview_mcp.core.services.extended_hours_service import (
+    get_extended_hours_price,
+    get_extended_hours_price_async,
+)
 from tradingview_mcp.core.services.options_service import (
     get_options_chain,
     get_unusual_options_activity,
+)
+from tradingview_mcp.core.services.futures_service import (
+    get_futures_overview,
+    get_futures_movers,
+    get_futures_category_snapshot,
+    get_futures_watchlist,
 )
 from tradingview_mcp.core.services.backtest_service import (
     run_backtest,
@@ -120,10 +135,14 @@ _auth_provider, _auth_settings = _build_auth()
 mcp = FastMCP(
     name="TradingView Multi-Market Screener",
     instructions=(
-        "U.S. market screener backed by TradingView and Yahoo Finance. "
-        "Focuses on NASDAQ, NYSE, and AMEX-listed stocks and ETFs. "
-        "Tools: top_gainers, top_losers, bollinger_scan, asset_analysis, multi_agent_analysis, "
-        "volume_breakout_scanner, us_sector_scan, stock_extended_hours, and options tools."
+        "Multi-market screener backed by TradingView and Yahoo Finance. "
+        "Supports U.S. stocks (NASDAQ, NYSE, AMEX), crypto exchanges (KuCoin, Binance, Bybit, MEXC, etc.), "
+        "stock markets (EGX, BIST, Bursa Malaysia, HKEX, SSE, SZSE, TWSE, TPEX), "
+        "and futures markets (CME, COMEX, NYMEX, CBOT — equity index, energy, metals, "
+        "agriculture, rates, forex, crypto futures). "
+        "Tools: top_gainers, top_losers, bollinger_scan, asset_analysis, coin_analysis, multi_agent_analysis, "
+        "volume_breakout_scanner, us_sector_scan, stock_extended_hours, futures_market_overview, "
+        "futures_top_movers, futures_category_snapshot, futures_watchlist, and more."
     ),
     token_verifier=_auth_provider,
     auth=_auth_settings,
@@ -642,7 +661,7 @@ if _auth_provider is not None and _auth_settings is not None:
 # ── Screener tools ─────────────────────────────────────────────────────────────
 
 @mcp.tool()
-def top_gainers(exchange: str = "NASDAQ", timeframe: str = "15m", limit: int = 25) -> list[dict] | dict:
+async def top_gainers(exchange: str = "NASDAQ", timeframe: str = "15m", limit: int = 25) -> list[dict] | dict:
     """Return top gainers for an exchange and timeframe using Bollinger Band analysis.
 
     Args:
@@ -658,7 +677,12 @@ def top_gainers(exchange: str = "NASDAQ", timeframe: str = "15m", limit: int = 2
     timeframe = sanitize_timeframe(timeframe, "15m")
     limit = max(1, min(limit, 50))
     try:
-        rows = fetch_trending_analysis(exchange, timeframe=timeframe, limit=limit)
+        # Underlying tradingview-screener is sync (uses urllib). Push to a
+        # worker thread so the event loop is free for other concurrent
+        # tool calls.
+        rows = await asyncio.to_thread(
+            fetch_trending_analysis, exchange, timeframe=timeframe, limit=limit
+        )
     except BatchExecutionError as e:
         return make_error(
             ErrorCode.ALL_BATCHES_FAILED, str(e),
@@ -696,9 +720,15 @@ def top_losers(exchange: str = "NASDAQ", timeframe: str = "15m", limit: int = 25
 def bollinger_scan(exchange: str = "NASDAQ", timeframe: str = "4h", bbw_threshold: float = 0.04, limit: int = 50) -> list[dict]:
     """Scan U.S. stocks and ETFs for low Bollinger Band Width (squeeze detection).
 
+    This scans a whole EXCHANGE for squeezes (canonical name is exactly
+    `bollinger_scan`; there is no "get_bollinger_band_analysis" tool). For
+    the Bollinger read of ONE symbol, call `coin_analysis` instead.
+
+    Example: bollinger_scan(exchange="BINANCE", timeframe="15m", bbw_threshold=0.008)
+
     Args:
-        exchange: Exchange — NASDAQ, NYSE, or AMEX
-        timeframe: One of 5m, 15m, 1h, 4h, 1D, 1W, 1M
+        exchange: Exchange — crypto: KUCOIN, BINANCE, BYBIT, MEXC; stocks: EGX, BIST, NASDAQ, NYSE, BURSA, HKEX, SSE, SZSE, TWSE, TPEX
+        timeframe: One of 5m, 15m, 1h, 4h, 1D, 1W, 1M. Typical squeeze thresholds: 15m→0.008, 1h→0.02, 4h→0.04, 1D→0.12
         bbw_threshold: Maximum BBW value to filter (default 0.04)
         limit: Number of rows to return (max 100)
     """
@@ -744,9 +774,17 @@ def rating_filter(exchange: str = "NASDAQ", timeframe: str = "5m", rating: int =
 def asset_analysis(symbol: str, exchange: str = "NASDAQ", timeframe: str = "15m") -> dict:
     """Get detailed analysis for a U.S. stock or ETF on the specified exchange and timeframe.
 
+    This is the canonical single-symbol technical readout (there is no
+    "get_technical_analysis" or "get_technical_summary" tool — use THIS one).
+    Use `multi_timeframe_analysis` instead when you need trend alignment
+    across several timeframes, and `combined_analysis` when you also want
+    news sentiment + headlines in the same call.
+
+    Example: coin_analysis(symbol="BTCUSDT", exchange="BINANCE", timeframe="1h")
+
     Args:
-        symbol: U.S. symbol like "AAPL", "MSFT", "SPY", or "GDX"
-        exchange: Exchange — NASDAQ, NYSE, AMEX, NYSEARCA, or PCX
+        symbol: Bare ticker, no exchange prefix — crypto: "BTCUSDT", "ETHUSDT"; stocks: "AAPL" (NASDAQ), "COMI" (EGX), "THYAO" (BIST), "600519" (SSE), "300251" (SZSE), "2330" (TWSE), "3105" (TPEX)
+        exchange: Exchange — crypto: KUCOIN, BINANCE, MEXC; stocks: EGX, BIST, NASDAQ, NYSE, AMEX, NYSEARCA, PCX, BURSA, HKEX, SSE, SZSE, TWSE, TPEX. If the symbol isn't listed there, the error's `listed_on` field names exchanges that do list it.
         timeframe: Time interval (5m, 15m, 1h, 4h, 1D, 1W, 1M)
 
     Returns:
@@ -834,7 +872,7 @@ def advanced_candle_pattern(
 # ── Volume scanner tools ───────────────────────────────────────────────────────
 
 @mcp.tool()
-def volume_breakout_scanner(
+async def volume_breakout_scanner(
     exchange: str = "NASDAQ",
     timeframe: str = "15m",
     volume_multiplier: float = 2.0,
@@ -861,7 +899,13 @@ def volume_breakout_scanner(
     price_change_min = max(1.0, min(20.0, price_change_min))
     limit = max(1, min(limit, 50))
     try:
-        return volume_breakout_scan(exchange, timeframe, volume_multiplier, price_change_min, limit)
+        # volume_breakout_scan iterates many batches against the screener
+        # endpoint (sync urllib). Off-load to a worker thread to keep the
+        # event loop responsive for other concurrent tool calls.
+        return await asyncio.to_thread(
+            volume_breakout_scan,
+            exchange, timeframe, volume_multiplier, price_change_min, limit,
+        )
     except BatchExecutionError as e:
         return make_error(
             ErrorCode.ALL_BATCHES_FAILED, str(e),
@@ -963,34 +1007,116 @@ def us_sector_scan(sector: str = "", timeframe: str = "1D") -> dict:
 # ── Multi-timeframe analysis ───────────────────────────────────────────────────
 
 @mcp.tool()
-def multi_timeframe_analysis(symbol: str, timeframes: list[str], exchange: str = "NASDAQ") -> dict:
+async def multi_timeframe_analysis(symbol: str, timeframes: list[str], exchange: str = "NASDAQ") -> dict:
     """Multi-timeframe alignment analysis (Monthly → Weekly → Daily → 4H → 1H → 15m → 5m).
 
+    Canonical name is exactly `multi_timeframe_analysis` (there is no
+    "get_multi_timeframe_analysis" tool). Use this for cross-timeframe trend
+    alignment on ONE symbol; for a single-timeframe deep dive use
+    `coin_analysis`; for TA + sentiment + news use `combined_analysis`.
+
+    Example: multi_timeframe_analysis(symbol="SOLUSDT", exchange="BINANCE")
+
     Args:
-        symbol: U.S. symbol like "AAPL", "NVDA", "SPY", or "GDX"
+        symbol: Bare ticker, no exchange prefix — crypto: "BTCUSDT"; stocks: "AAPL" (NASDAQ), "COMI" (EGX), "THYAO" (BIST), "600519" (SSE), "300251" (SZSE), "2330" (TWSE), "3105" (TPEX), "GDX" (AMEX)
         timeframes: Required, non-empty list of timeframes to analyze, e.g.
             ["1M", "1H", "1D"]. Case-insensitive. Response data is always
             reordered to canonical precedence (Monthly first, 5-Min last)
             regardless of the order passed in.
-        exchange: Exchange — NASDAQ, NYSE, AMEX, NYSEARCA, or PCX
+        exchange: Exchange — crypto: KUCOIN, BINANCE, MEXC; stocks: EGX, BIST, NASDAQ, NYSE, AMEX, NYSEARCA, PCX, SSE, SZSE, TWSE, TPEX
     """
     exchange = _sanitize_us_exchange(exchange, "NASDAQ")
     full_symbol = normalize_tradingview_symbol(symbol, exchange)
-    return run_multi_timeframe_analysis(full_symbol, exchange, timeframes)
+    # tradingview_ta backs this with a single threading.Semaphore-gated
+    # request; pushing the whole call to a thread keeps the event loop
+    # free while we wait on the upstream HTTP.
+    return await asyncio.to_thread(run_multi_timeframe_analysis, full_symbol, exchange, timeframes)
 
 
-# ── News tools ─────────────────────────────────────────────────────────────────
+# ── Sentiment & news tools ─────────────────────────────────────────────────────
 
 @mcp.tool()
-def financial_news(symbol: str = None, category: str = "stocks", limit: int = 10) -> dict:
-    """Real-time market news from RSS feeds for U.S. equities and ETFs.
+def market_sentiment(symbol: str, category: str = "all", limit: int = 20) -> dict:
+    """News sentiment for stocks and crypto (licensed Marketaux entity sentiment).
 
     Args:
-        symbol: Optional symbol filter ("AAPL", "NVDA", "SPY"). None = all news.
-        category: Feed category ("stocks" or "all")
+        symbol: Asset symbol ("AAPL", "BTC", "ETH", "TSLA")
+        category: News group to search ("crypto", "stocks", "all")
+        limit: Max articles to analyse
+    """
+    return analyze_sentiment(symbol, category, limit)
+
+
+@mcp.tool()
+async def financial_news(symbol: str = None, category: str = "stocks", limit: int = 10) -> dict:
+    """Real-time financial news via Marketaux (licensed).
+
+    Args:
+        symbol: Optional symbol filter ("AAPL", "BTC"). None = all news.
+        category: News category ("crypto", "stocks", "all")
         limit: Max number of news items
     """
-    return fetch_news_summary(symbol, category, limit)
+    # The Marketaux fetch is sync (urllib) — offload so parallel news
+    # requests don't block the event loop.
+    return await asyncio.to_thread(fetch_news_summary, symbol, category, limit)
+
+
+@mcp.tool()
+async def combined_analysis(symbol: str, exchange: str = "NASDAQ", timeframe: str = "1D") -> dict:
+    """POWER TOOL: TradingView technical analysis + news sentiment + financial news.
+
+    Use this when you want TA AND sentiment AND news for one symbol in a
+    single call. For indicators only, `coin_analysis` is faster; for
+    cross-timeframe trend alignment use `multi_timeframe_analysis`.
+
+    Example: combined_analysis(symbol="NVDA", exchange="NASDAQ", timeframe="1D")
+
+    Args:
+        symbol: Bare ticker, no exchange prefix ("AAPL", "BTCUSDT", "THYAO", "GDX")
+        exchange: Exchange (NASDAQ, NYSE, AMEX, NYSEARCA, PCX, BINANCE, KUCOIN, MEXC, BIST, EGX, TWSE, TPEX)
+        timeframe: Analysis timeframe (5m, 15m, 1h, 4h, 1D, 1W)
+    """
+    exchange_clean = sanitize_exchange(exchange, "NASDAQ")
+    timeframe_clean = sanitize_timeframe(timeframe, "1D")
+    cat = "crypto" if exchange_clean.upper() in ["BINANCE", "KUCOIN", "BYBIT", "MEXC"] else "stocks"
+
+    # The three sub-calls hit independent upstreams (TradingView TA,
+    # Marketaux news/sentiment) so fan them out in parallel. Pre-P4 this was
+    # ~3x sequential wall-clock; now bounded by the slowest single call.
+    # The TA throttle (threading.Semaphore in screener_provider) still
+    # caps in-flight TV calls correctly because asyncio.to_thread runs
+    # the sync call in a worker thread that respects the semaphore.
+    tech, sentiment, news = await asyncio.gather(
+        asyncio.to_thread(analyze_coin, symbol, exchange_clean, timeframe_clean),
+        asyncio.to_thread(analyze_sentiment, symbol, cat),
+        asyncio.to_thread(fetch_news_summary, symbol, cat, 5),
+    )
+
+    tech_momentum = tech.get("market_sentiment", {}).get("momentum", "") if isinstance(tech, dict) else ""
+    tech_bullish = tech_momentum == "Bullish"
+    sent_bullish = sentiment.get("sentiment_score", 0) > 0.1
+    signals_agree = tech_bullish == sent_bullish
+    confidence = "HIGH" if signals_agree else "MIXED"
+    tech_signal = tech.get("market_sentiment", {}).get("buy_sell_signal", "N/A") if isinstance(tech, dict) else "N/A"
+
+    return {
+        "symbol": symbol,
+        "exchange": exchange_clean,
+        "timeframe": timeframe_clean,
+        "technical": tech,
+        "sentiment": sentiment,
+        "news": {"count": news.get("count", 0), "latest": news.get("items", [])[:3]},
+        "confluence": {
+            "signals_agree": signals_agree,
+            "confidence": confidence,
+            "recommendation": (
+                f"Technical {tech_signal} "
+                f"{'confirmed by' if signals_agree else 'conflicts with'} "
+                f"{sentiment.get('sentiment_label', 'Neutral')} news sentiment "
+                f"({sentiment.get('posts_analyzed', 0)} articles analyzed)"
+            ),
+        },
+    }
 
 
 # ── Backtest tools ─────────────────────────────────────────────────────────────
@@ -1086,13 +1212,13 @@ def walk_forward_backtest_strategy(
 # ── Yahoo Finance tools ────────────────────────────────────────────────────────
 
 @mcp.tool()
-def yahoo_price(symbol: str) -> dict:
-    """Real-time price quote from Yahoo Finance for any stock, ETF, or index.
+async def yahoo_price(symbol: str) -> dict:
+    """Real-time price quote from Yahoo Finance for any stock, crypto, ETF or index.
 
     Args:
         symbol: Yahoo Finance symbol — e.g. AAPL, SPY, QQQ, ^GSPC, EURUSD=X
     """
-    return get_price(normalize_yahoo_symbol(symbol))
+    return await get_price_async(normalize_yahoo_symbol(symbol))
 
 
 @mcp.tool()
@@ -1104,7 +1230,27 @@ def market_snapshot() -> dict:
 
 
 @mcp.tool()
-def stock_extended_hours(symbol: str) -> dict:
+def bitcoin_market_pulse() -> dict:
+    """Single-call BTC macro context: price, dominance, total market cap + risk assessment.
+
+    Use this WHENEVER analyzing any cryptocurrency (altcoin or BTC itself) to
+    get the broader market frame in one shot. A SOL/ETH/whatever setup looks
+    very different when BTC is dumping with rising dominance vs. when alts
+    are leading. Calling this once gives Claude the macro context to provide
+    Bitcoin-aware commentary alongside the per-coin analysis - without
+    chaining 2-3 separate yahoo_price + manual reasoning calls.
+
+    Returns:
+      - bitcoin: price, 24h change %, volume, market cap
+      - dominance: BTC and ETH market-cap share of total crypto
+      - total_market: total crypto mcap + 24h change + active coin count
+      - assessment: label (HIGH_RISK / ALT_RISK / ALT_FAVORABLE / OPPORTUNITY_WITH_CAUTION / NEUTRAL) + 1-paragraph reasoning
+    """
+    return get_bitcoin_market_pulse()
+
+
+@mcp.tool()
+async def stock_extended_hours(symbol: str) -> dict:
     """Real-time pre-market and after-hours prices for a US stock symbol.
 
     Use this when the user asks about a stock outside the regular 9:30am-4pm
@@ -1126,7 +1272,7 @@ def stock_extended_hours(symbol: str) -> dict:
         - post_market: {price, as_of_utc, change_vs_regular_close_pct} or null
         - previous_close, currency, exchange, market_state for context
     """
-    return get_extended_hours_price(symbol)
+    return await get_extended_hours_price_async(symbol)
 
 
 @mcp.tool()
@@ -1225,7 +1371,7 @@ async def rest_multi_timeframe_analysis(request):
             "1D",
             exchange_override=exchange_override,
         )
-        return _json_response(multi_timeframe_analysis(symbol=bare_symbol, timeframes=timeframes, exchange=exchange))
+        return _json_response(await multi_timeframe_analysis(symbol=bare_symbol, timeframes=timeframes, exchange=exchange))
     except ExchangeResolutionError as exc:
         return _json_response(exc.payload, status_code=exc.status_code)
     except ValueError as exc:
@@ -1460,6 +1606,93 @@ async def rest_walk_forward_backtest(request):
             "interval": (str, "1d"),
         },
     )
+
+
+# ── Futures tools ─────────────────────────────────────────────────────────────
+
+@mcp.tool()
+def futures_market_overview(
+    category: str = "all",
+    exchanges: str = "us",
+    limit: int = 30,
+    volume_min: int = 0,
+) -> dict:
+    """Top futures contracts sorted by trading volume.
+
+    Args:
+        category:   all | equity_index | energy | metals | agriculture | rates | forex | crypto_futures
+        exchanges:  us (CME, COMEX, NYMEX, CBOT) | global (adds ICE, EUREX)
+        limit:      max contracts to return (default 30)
+        volume_min: minimum volume filter (0 = no filter)
+
+    Returns:
+        Dict with total_available count and list of contracts with OHLCV + % change.
+    """
+    try:
+        return get_futures_overview(
+            category=category,
+            exchanges=exchanges,
+            limit=limit,
+            volume_min=volume_min,
+        )
+    except Exception as exc:
+        return make_error(ErrorCode.SERVICE_ERROR, f"Futures overview failed: {exc}")
+
+
+@mcp.tool()
+def futures_top_movers(
+    direction: str = "gainers",
+    exchanges: str = "us",
+    limit: int = 20,
+    volume_min: int = 10,
+) -> dict:
+    """Futures contracts with the biggest percentage moves today.
+
+    Args:
+        direction:  gainers | losers
+        exchanges:  us | global
+        limit:      max results
+        volume_min: minimum volume filter (default 10, filters illiquid contracts)
+
+    Returns:
+        List of futures ranked by % change with OHLCV data.
+    """
+    direction = direction.lower()
+    if direction not in ("gainers", "losers"):
+        direction = "gainers"
+    try:
+        return get_futures_movers(
+            direction=direction,
+            exchanges=exchanges,
+            limit=limit,
+            volume_min=volume_min,
+        )
+    except Exception as exc:
+        return make_error(ErrorCode.SERVICE_ERROR, f"Futures movers failed: {exc}")
+
+
+@mcp.tool()
+def futures_category_snapshot(category: str = "energy") -> dict:
+    """Quote all major front-month contracts in a specific futures category.
+
+    Args:
+        category: equity_index | energy | metals | agriculture | rates | forex | crypto_futures
+
+    Returns:
+        OHLCV quotes for the standard watchlist of contracts in that category.
+        Example symbols: ES1! NQ1! (equity_index), CL1! NG1! (energy), GC1! SI1! (metals).
+    """
+    return get_futures_category_snapshot(category)
+
+
+@mcp.tool()
+def futures_watchlist() -> dict:
+    """Return the full categorized list of well-known front-month futures symbols.
+
+    Categories: equity_index, energy, metals, agriculture, rates, forex, crypto_futures.
+    Use these symbols with futures_category_snapshot or coin_analysis for deeper analysis.
+    """
+    return get_futures_watchlist()
 
 
 # ── Resource ───────────────────────────────────────────────────────────────────

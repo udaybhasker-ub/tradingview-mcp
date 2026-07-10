@@ -242,3 +242,6 @@ node_modules/
 # Build artifacts that shouldn't be committed
 dist/
 *.egg-info/
+
+# Remotion promo video project (source + renders kept out of the repo)
+promo/
