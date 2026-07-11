@@ -439,6 +439,8 @@ async def _resolve_asset_route(
             return _json_response(json.loads(str(exc)), status_code=400)
         except Exception:
             return _json_response({"error": str(exc)}, status_code=400)
+    except Exception as exc:
+        return _json_response({"error": f"REST handler failed: {exc}"}, status_code=500)
 
 
 async def _extract_params(request, specs: dict[str, tuple[type, Any]]) -> dict[str, Any]:
@@ -492,7 +494,10 @@ async def _run_rest_handler(
         params = await _extract_params(request, specs or {})
         if path_params:
             params.update(path_params)
-        return _json_response(handler(**params))
+        result = handler(**params)
+        if asyncio.iscoroutine(result):
+            result = await result
+        return _json_response(result)
     except ValueError as exc:
         return _json_response({"error": str(exc)}, status_code=400)
     except Exception as exc:
@@ -1087,7 +1092,7 @@ async def combined_analysis(symbol: str, exchange: str = "NASDAQ", timeframe: st
     # caps in-flight TV calls correctly because asyncio.to_thread runs
     # the sync call in a worker thread that respects the semaphore.
     tech, sentiment, news = await asyncio.gather(
-        asyncio.to_thread(analyze_coin, symbol, exchange_clean, timeframe_clean),
+        asyncio.to_thread(analyze_asset, symbol, exchange_clean, timeframe_clean),
         asyncio.to_thread(analyze_sentiment, symbol, cat),
         asyncio.to_thread(fetch_news_summary, symbol, cat, 5),
     )
@@ -1379,6 +1384,8 @@ async def rest_multi_timeframe_analysis(request):
             return _json_response(json.loads(str(exc)), status_code=400)
         except Exception:
             return _json_response({"error": str(exc)}, status_code=400)
+    except Exception as exc:
+        return _json_response({"error": f"REST handler failed: {exc}"}, status_code=500)
 
 
 @mcp.custom_route("/api/assets/{symbol}/volume-confirmation", methods=["GET"])

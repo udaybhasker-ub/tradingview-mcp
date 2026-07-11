@@ -152,7 +152,7 @@ async def test_top_gainers_offloads_to_thread(monkeypatch):
         await asyncio.sleep(0.05)
 
     gainers_task = asyncio.create_task(
-        server.top_gainers(exchange="KUCOIN", timeframe="15m", limit=5)
+        server.top_gainers(exchange="NASDAQ", timeframe="15m", limit=5)
     )
     marker_task = asyncio.create_task(parallel_marker())
     rows, _ = await asyncio.gather(gainers_task, marker_task)
@@ -190,7 +190,7 @@ async def test_combined_analysis_fans_subcalls_in_parallel(monkeypatch):
         time.sleep(0.1)
         return {"count": 3, "items": [{"title": "x"}, {"title": "y"}, {"title": "z"}]}
 
-    monkeypatch.setattr(server, "analyze_coin", slow_tech)
+    monkeypatch.setattr(server, "analyze_asset", slow_tech)
     monkeypatch.setattr(server, "analyze_sentiment", slow_sentiment)
     monkeypatch.setattr(server, "fetch_news_summary", slow_news)
 
@@ -233,7 +233,7 @@ async def test_volume_breakout_scanner_translates_batch_failure(monkeypatch):
 
     monkeypatch.setattr(server, "volume_breakout_scan", boom)
 
-    result = await server.volume_breakout_scanner(exchange="KUCOIN")
+    result = await server.volume_breakout_scanner(exchange="NASDAQ")
     assert isinstance(result, dict)
     assert "error" in result
     assert result["error"]["code"] == "ALL_BATCHES_FAILED"
@@ -253,7 +253,7 @@ async def test_top_gainers_translates_batch_failure(monkeypatch):
 
     monkeypatch.setattr(server, "fetch_trending_analysis", boom)
 
-    result = await server.top_gainers(exchange="KUCOIN", timeframe="15m", limit=10)
+    result = await server.top_gainers(exchange="NASDAQ", timeframe="15m", limit=10)
     assert isinstance(result, dict)
     assert result["error"]["code"] == "ALL_BATCHES_FAILED"
 
@@ -289,7 +289,7 @@ async def test_financial_news_offloads_feedparser(monkeypatch):
 
 
 async def test_multi_timeframe_analysis_offloads(monkeypatch):
-    def slow_run(full_symbol, exchange):
+    def slow_run(full_symbol, exchange, timeframes):
         time.sleep(0.05)
         return {"symbol": full_symbol, "exchange": exchange, "ok": True}
 
@@ -297,8 +297,8 @@ async def test_multi_timeframe_analysis_offloads(monkeypatch):
 
     start = time.perf_counter()
     a, b = await asyncio.gather(
-        server.multi_timeframe_analysis("BTCUSDT", "KUCOIN"),
-        server.multi_timeframe_analysis("ETHUSDT", "KUCOIN"),
+        server.multi_timeframe_analysis("AAPL", ["1D"], "NASDAQ"),
+        server.multi_timeframe_analysis("MSFT", ["1D"], "NASDAQ"),
     )
     elapsed = time.perf_counter() - start
     assert a["ok"] is True and b["ok"] is True

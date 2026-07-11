@@ -28,8 +28,15 @@ def _fake_analysis(*, bias_by_tf: dict[str, str]):
         return {
             "rsi": 55.0,
             "macd": {"crossover": "bullish"},
+            "sma": {"sma20": 100.0, "sma50": 99.0, "sma200": 95.0},
             "ema": {"ema20": 100.0, "ema50": 99.0, "ema200": 95.0},
+            "atr": {"value": 1.5, "percent_of_price": 1.5, "volatility": "Medium"},
             "volume": {"signal": "normal"},
+            "obv": {"current_volume": 1_000_000.0, "direction": "accumulation"},
+            "support_resistance": {"support": 98.0, "resistance": 103.0},
+            "bollinger_bands": {"upper": 105.0, "middle": 100.0, "lower": 95.0},
+            "stochastic": {"k": 55.0, "d": 50.0, "signal": "Neutral"},
+            "adx": {"value": 22.0, "trend_strength": "Moderate"},
             "market_structure": {
                 "trend": "uptrend",
                 "trend_strength": "strong",
